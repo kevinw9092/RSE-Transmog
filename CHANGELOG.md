@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.7
+- **Fixed freezes when switching item types.** On each switch the mod checked which looks you know. Any look without a known recipe made it re-read all ~900 of the game's recipes, every time (at most every 5 s). It now reads only recipes it has not seen before. It also remembers looks that have no recipe, and checks those again only once a minute.
+- With Debug on, any step of a switch that takes 30 ms or more is logged ("slow switch to ...").
+
 ## 1.2.6
 - Fixed the Transmog window sometimes going dead after a join or world change: hover sounds played, but nothing highlighted and looks could not be clicked. The game keeps the inventory panel across some map loads, and the mod only re-attached to newly made panels. After a load it now also re-attaches to the panel that is already there.
 

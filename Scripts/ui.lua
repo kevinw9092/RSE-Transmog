@@ -827,18 +827,31 @@ local function buildSlot(view, slot, hideable)
 end
 
 function U.showSlot(view, slot)
+    -- Debug: each step of a slot switch that takes 30 ms or more is logged.
+    local t0 = os.clock()
+    local steps = {}
+    local function lap(label)
+        local now = os.clock()
+        if now - t0 >= 0.03 then steps[#steps + 1] = string.format('%s %.0f ms', label, (now - t0) * 1000) end
+        t0 = now
+    end
     U.slot = slot
     view.message = nil
     local key = V.keyFor(slot)
     view.key = key
-    if key and not view.slots[key] then buildSlot(view, key, HIDEABLE[slot] or C.isHeld(key)) end
+    if key and not view.slots[key] then
+        buildSlot(view, key, HIDEABLE[slot] or C.isHeld(key))
+        lap('build')
+    end
     for k, other in pairs(view.slots) do
         other.grid:SetVisibility(k == key and SELF_HIT_TEST_INVISIBLE or COLLAPSED)
     end
-    if key then C.refreshUnlocked(key, V.seen, progressComponent()) end
+    if key then C.refreshUnlocked(key, V.seen, progressComponent()) lap('known looks') end
     pcall(function() view.list:ScrollToStart() end)
     view.scrollTries = 2 -- U.tick scrolls the current look into view once rows are laid out
     U.refresh(view)
+    lap('refresh')
+    if #steps > 0 then debug('slow switch to ' .. tostring(slot) .. ': ' .. table.concat(steps, ', ')) end
 end
 
 local function setMenu(view, open)

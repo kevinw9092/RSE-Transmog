@@ -417,24 +417,37 @@ function C.prepare(slot)
 end
 
 -- Maps each wearable and weapon to the recipe that crafts it. Recipes load
--- over time, so a miss rebuilds the map (at most every 5 seconds).
-local recipes, recipesAt = nil, -math.huge
-local function recipeFor(asset)
-    local key = pathOf(asset)
-    if (not recipes or not recipes[key]) and os.clock() - recipesAt >= 5 then
-        recipesAt = os.clock()
-        recipes = {}
-        for _, recipe in ipairs(FindAllOf('RecipeData') or {}) do
+-- over time, so a miss looks again (at most every 5 seconds), but only reads
+-- recipes not indexed before: reading all ~900 recipes' outputs on every
+-- miss froze the window when switching slots (looks with no recipe miss
+-- every time). A look still without a recipe after a look is remembered and
+-- only retried after 60 seconds.
+local recipes, recipesAt, indexed, noRecipe = {}, -math.huge, {}, {}
+local function indexRecipes()
+    recipesAt = os.clock()
+    for _, recipe in ipairs(FindAllOf('RecipeData') or {}) do
+        local addr = get(function() return recipe:GetAddress() end) or pathOf(recipe)
+        if addr and not indexed[addr] then
+            indexed[addr] = true
             pcall(function()
+                local recipePath = pathOf(recipe)
                 recipe.ItemsCreated:ForEach(function(_, element)
                     local item = element:get().ItemData
-                    if valid(item) then recipes[pathOf(item)] = pathOf(recipe) end
+                    if valid(item) then recipes[pathOf(item)] = recipePath end
                 end)
             end)
         end
     end
+end
+local function recipeFor(asset)
+    local key = pathOf(asset)
+    local now = os.clock()
+    if not recipes[key] and now - recipesAt >= 5 and now - (noRecipe[key] or -math.huge) >= 60 then
+        indexRecipes()
+        if not recipes[key] then noRecipe[key] = now end
+    end
     -- Only the recipe's path is kept; the recipe itself is looked up now.
-    local recipePath = recipes and recipes[key]
+    local recipePath = recipes[key]
     if not recipePath or recipePath == '' then return nil end
     local ok, recipe = pcall(StaticFindObject, recipePath)
     return ok and valid(recipe) and recipe or nil
@@ -466,7 +479,7 @@ end
 -- world may have different content loaded, and they are cheap to rebuild.
 function C.forget()
     iconCache = {}
-    recipes, recipesAt = nil, -math.huge
+    recipes, recipesAt, indexed, noRecipe = {}, -math.huge, {}, {}
 end
 
 return C
