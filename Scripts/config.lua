@@ -1,4 +1,5 @@
--- RSE-Transmog user settings. Edit with any text editor, then restart the game.
+-- RSE-Transmog user settings. Edit with any text editor, then restart the game,
+-- or change them in game with RSE-ModMenu (Esc > MODS; Debug applies at once).
 return {
     -- "native": the wardrobe opens as its own window beside the inventory,
     --           in the inventory's frame art, with icon slots and icon tabs.

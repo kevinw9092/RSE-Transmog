@@ -2,7 +2,7 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.2.2'
+local VERSION = '1.2.3'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
@@ -27,6 +27,17 @@ if type(RegisterConsoleCommandHandler) == 'function' then
             N.describe(out)
         end)
         if not okDescribe then out('status failed: ' .. tostring(describeErr)) end
+        return true
+    end)
+    -- Developer tool: logs the candidate brushes of a live empty and filled
+    -- inventory slot (open the inventory first), for the slot art.
+    pcall(RegisterConsoleCommandHandler, 'transmog_slotart', function(_, _, ar)
+        local function out(line)
+            log(line)
+            pcall(function() ar:Log('[RSE-Transmog] ' .. line) end)
+        end
+        local okArt, artErr = pcall(U.describeSlotArt, out)
+        if not okArt then out('slotart failed: ' .. tostring(artErr)) end
         return true
     end)
     -- Developer tool: dumps the game's UI building blocks to ui-dump.txt.
@@ -61,8 +72,23 @@ pcall(RegisterLoadMapPreHook, function()
 end)
 pcall(RegisterLoadMapPostHook, function() forgetWorld(SETTLE) end)
 
+-- RSE-ModMenu (Esc > MODS) publishes changed settings as shared variables.
+-- The config table is shared by every module, so live settings apply at once;
+-- UIStyle, Multiplayer and ShowOthers apply after a restart (see modmenu.json).
+local Cfg = require('config')
+local MODMENU_ID = 'RSE-Transmog'
+local mmRev = nil
+local function modMenuSync()
+    local ok, rev = pcall(function() return ModRef:GetSharedVariable('ModMenu.' .. MODMENU_ID .. '.rev') end)
+    if not ok or type(rev) ~= 'number' or rev == mmRev then return end
+    mmRev = rev
+    local okV, v = pcall(function() return ModRef:GetSharedVariable('ModMenu.' .. MODMENU_ID .. '.Debug') end)
+    if okV and type(v) == 'boolean' then Cfg.Debug = v end
+end
+
 local frame = 0
 local function step()
+    modMenuSync()
     if idleUntil > 0 then
         if os.clock() < idleUntil then return end
         idleUntil = 0

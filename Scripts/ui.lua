@@ -81,6 +81,8 @@ local COLOR = {
 local FALLBACK_MENU = { Left = 0, Top = -413, Right = 613, Bottom = 420 }
 
 local function log(s) print('[RSE-Transmog/UI] ' .. tostring(s) .. '\n') end
+-- Informational lines only with Debug on (Cfg is live: RSE-ModMenu can change it).
+local function debug(s) if Cfg.Debug then log(s) end end
 local function valid(o) local k = type(o) return (k == 'userdata' or k == 'table') and o:IsValid() == true end
 local function get(fn) local ok, v = pcall(fn) if ok then return v end return nil end
 local function name(o) return valid(o) and o:GetFullName() or '' end
@@ -122,7 +124,7 @@ local function removeStale(parent)
         end
         if stale then
             pcall(function() child:RemoveFromParent() end)
-            log('removed leftover ' .. childName)
+            debug('removed leftover ' .. childName)
         end
     end
 end
@@ -349,15 +351,21 @@ local function newCell(view, parent, opts)
     return c
 end
 
--- The game's inventory slot art, for the square cells: the idle brush of a
--- live inventory slot (WBP_Inventory_ItemSlot_C, a CommonUI button that draws
--- its background from its button style). Tried in order: the style's
--- NormalBase, the brush the slot draws now (NormalStyle.Normal), its
--- CommonSlotBackground texture or material. Only brush data is copied (a
--- struct holding the texture or material); the slot widget itself, with its
--- hover particles (NS_InventoryHighlight), is never created.
+-- The game's inventory slot art for the square cells, copied from live
+-- inventory slots (WBP_Inventory_ItemSlot_C, a CommonUI button that draws its
+-- background from its button style). Two looks:
+--   cell  (look grid) what an EMPTY inventory slot draws: the brush its root
+--         button draws now (WidgetStyle.Disabled while disabled, else
+--         .Normal), else its NormalStyle.Normal; then the tab chain.
+--   tab   (tab column) the slot style's NormalBase (the item slot frame),
+--         else NormalStyle.Normal, else CommonSlotBackground.
+-- Only brush data is copied (a struct holding the texture or material); the
+-- slot widget itself, with its hover particles (NS_InventoryHighlight), is
+-- never created.
+-- `transmog_slotart` in the console logs every candidate brush.
 local SLOT_CLASS = 'WBP_Inventory_ItemSlot_C'
-local slotSource, slotSearched, slotArtLogged = nil, -math.huge, false
+local slotSource, emptySource, slotSearched = nil, nil, -math.huge
+local slotArtLogged = {}
 
 local function paintable(brush)
     return get(function()
@@ -366,55 +374,139 @@ local function paintable(brush)
     end) == true
 end
 
--- A live inventory slot, searched again (at most every 2 s) once it is gone.
-local function findSlotSource()
-    if valid(slotSource) then return slotSource end
-    if os.clock() - slotSearched < 2 then return nil end
-    slotSearched, slotSource = os.clock(), nil
-    for _, s in ipairs(get(function() return FindAllOf(SLOT_CLASS) end) or {}) do
-        if valid(s) and not name(s):find('Default__', 1, true) then slotSource = s break end
+local function isEmpty(s) return not valid(get(function() return s.ContainedItem end)) end
+
+-- Any live inventory slot, and an empty one (main grid first, then any), both
+-- searched again (at most every 2 s) once gone or no longer empty.
+local function findSlots()
+    local emptyOk = valid(emptySource) and isEmpty(emptySource)
+    if valid(slotSource) and emptyOk then return slotSource, emptySource end
+    if os.clock() - slotSearched >= 2 then
+        slotSearched = os.clock()
+        local any, empty, emptyGrid
+        for _, s in ipairs(get(function() return FindAllOf(SLOT_CLASS) end) or {}) do
+            local n = valid(s) and name(s) or ''
+            if n ~= '' and not n:find('Default__', 1, true) then
+                any = any or s
+                if not emptyGrid and isEmpty(s) then
+                    -- The main grid's slots, not the quick-access bar's.
+                    if n:find('InventoryBody', 1, true) then emptyGrid = s else empty = empty or s end
+                end
+            end
+        end
+        slotSource, emptySource = any, emptyGrid or empty
+        emptyOk = emptySource ~= nil
     end
-    return slotSource
+    return valid(slotSource) and slotSource or nil, emptyOk and emptySource or nil
 end
 
--- Copies the slot art onto `image`; returns what was copied, or nil.
-local function copySlotArt(image)
-    local s = findSlotSource()
-    if not s then return nil end
-    local style = get(function() return s:GetStyle() end)
-    for _, source in ipairs({
-        { 'style NormalBase', function() return style.NormalBase end },
-        { 'NormalStyle.Normal', function() return s.NormalStyle.Normal end },
-    }) do
-        local brush = get(source[2])
+-- The brush a slot's root button (InternalRootButtonBase) draws now.
+local function drawnBrush(s)
+    local button = get(function() return s.WidgetTree.RootWidget end)
+    if not (valid(button) and get(function() return button:IsA('/Script/UMG.Button') end)) then return nil end
+    if get(function() return button:GetIsEnabled() end) == false then
+        return get(function() return button.WidgetStyle.Disabled end)
+    end
+    return get(function() return button.WidgetStyle.Normal end)
+end
+
+-- Copies the `kind` look onto `image`; returns the source slot and what was
+-- copied, or nil.
+local function copySlotArt(image, kind)
+    local any, empty = findSlots()
+    local sources = {}
+    if kind ~= 'tab' and empty then
+        sources[#sources + 1] = { empty, 'empty slot button', function() return drawnBrush(empty) end }
+        sources[#sources + 1] = { empty, 'empty slot NormalStyle.Normal', function() return empty.NormalStyle.Normal end }
+    end
+    if any then
+        local style = get(function() return any:GetStyle() end)
+        sources[#sources + 1] = { any, 'style NormalBase', function() return style.NormalBase end }
+        sources[#sources + 1] = { any, 'NormalStyle.Normal', function() return any.NormalStyle.Normal end }
+    end
+    for _, source in ipairs(sources) do
+        local brush = get(source[3])
         if brush and paintable(brush) and pcall(function() image:SetBrush(brush) end)
             and valid(get(function() return image.Brush.ResourceObject end)) then
-            return source[1]
+            return source[1], source[2]
         end
     end
-    local resource = get(function() return s.CommonSlotBackground end)
+    local resource = any and get(function() return any.CommonSlotBackground end)
     if valid(resource) then
         if get(function() return resource:IsA('/Script/Engine.Texture2D') end)
             and pcall(function() image:SetBrushFromTexture(resource, false) end) then
-            return 'CommonSlotBackground'
+            return any, 'CommonSlotBackground'
         elseif get(function() return resource:IsA('/Script/Engine.MaterialInterface') end)
             and pcall(function() image:SetBrushFromMaterial(resource) end) then
-            return 'CommonSlotBackground'
+            return any, 'CommonSlotBackground'
         end
     end
     return nil
 end
 
--- Gives a square cell the slot art once it can be found (flat `slot` till then).
+-- Gives a square cell its slot art once it can be found (flat `slot` till then).
 local function slotArt(c)
     if c.artCopied or not valid(c.art) then return end
-    local copied = copySlotArt(c.art)
+    local kind = c.artKind or 'cell'
+    local from, copied = copySlotArt(c.art, kind)
     if copied then
         pcall(function() c.art:SetColorAndOpacity({ R = 1, G = 1, B = 1, A = 1 }) end)
         c.artCopied = true
-        if not slotArtLogged then
-            slotArtLogged = true
-            log('slot art copied from ' .. name(slotSource) .. ' (' .. copied .. ')')
+        if not slotArtLogged[kind] then
+            slotArtLogged[kind] = true
+            debug(kind .. ' slot art copied from ' .. name(from) .. ' (' .. copied .. ')')
+        end
+    end
+end
+
+-- transmog_slotart: logs every candidate brush of a live empty and a filled
+-- inventory slot (reads only), to see where the empty-slot look comes from.
+local function describeBrush(out, label, brush)
+    if not brush then out('  ' .. label .. ': unreadable') return end
+    local function f(fn) local v = get(fn) return v == nil and '?' or tostring(v) end
+    out(string.format('  %s: res=%s drawAs=%s tint=%s(%s,%s,%s,%s) margin=%s,%s,%s,%s size=%sx%s tiling=%s',
+        label, f(function() return valid(brush.ResourceObject) and brush.ResourceObject:GetFullName() or 'none' end),
+        f(function() return brush.DrawAs end), f(function() return brush.TintColor.ColorUseRule end),
+        f(function() return brush.TintColor.SpecifiedColor.R end), f(function() return brush.TintColor.SpecifiedColor.G end),
+        f(function() return brush.TintColor.SpecifiedColor.B end), f(function() return brush.TintColor.SpecifiedColor.A end),
+        f(function() return brush.Margin.Left end), f(function() return brush.Margin.Top end),
+        f(function() return brush.Margin.Right end), f(function() return brush.Margin.Bottom end),
+        f(function() return brush.ImageSize.X end), f(function() return brush.ImageSize.Y end),
+        f(function() return brush.Tiling end)))
+end
+
+function U.describeSlotArt(out)
+    slotSearched = -math.huge
+    local any, empty = findSlots()
+    if not any then out('no live inventory slot: open the inventory first') return end
+    local filled
+    for _, s in ipairs(get(function() return FindAllOf(SLOT_CLASS) end) or {}) do
+        if valid(s) and not name(s):find('Default__', 1, true) and not isEmpty(s) then filled = s break end
+    end
+    for _, pair in ipairs({ { 'empty', empty }, { 'filled', filled } }) do
+        local s = pair[2]
+        if not s then
+            out(pair[1] .. ' slot: none found')
+        else
+            out(pair[1] .. ' slot: ' .. name(s))
+            local style = get(function() return s:GetStyle() end)
+            local button = get(function() return s.WidgetTree.RootWidget end)
+            out('  style=' .. (get(function() return style:GetFullName() end) or 'none')
+                .. ' singleMaterial=' .. tostring(get(function() return style.bSingleMaterial end))
+                .. ' root=' .. (get(function() return button:GetFullName() end) or 'none')
+                .. ' enabled=' .. tostring(get(function() return button:GetIsEnabled() end)))
+            for _, field in ipairs({ 'Normal', 'Hovered', 'Disabled' }) do
+                describeBrush(out, 'root WidgetStyle.' .. field, get(function() return button.WidgetStyle[field] end))
+            end
+            describeBrush(out, 'NormalStyle.Normal', get(function() return s.NormalStyle.Normal end))
+            describeBrush(out, 'DisabledStyle.Normal', get(function() return s.DisabledStyle.Normal end))
+            for _, field in ipairs({ 'NormalBase', 'NormalHovered', 'SelectedBase', 'Disabled', 'SingleMaterialBrush' }) do
+                describeBrush(out, 'style ' .. field, get(function() return style[field] end))
+            end
+            for _, field in ipairs({ 'SingleMaterialStyleMID', 'CommonSlotBackground', 'EnchantSlotBackground' }) do
+                local o = get(function() return s[field] end)
+                out('  ' .. field .. '=' .. (valid(o) and o:GetFullName() or 'none'))
+            end
         end
     end
 end
@@ -426,7 +518,8 @@ end
 -- slots and tabs) are not used here: they expect item and recipe data behind
 -- them.
 local function squareCell(view, parent, opts)
-    -- opts: width (nil = fill the grid column), height, icon (icon box size), action, note
+    -- opts: width (nil = fill the grid column), height, icon (icon box size), action, note,
+    -- art ('tab' for the tab column's slot art, else the empty-slot look)
     local sizeBox = widget('SizeBox', view.tree)
     if opts.width then sizeBox:SetWidthOverride(opts.width) end
     sizeBox:SetHeightOverride(opts.height)
@@ -456,7 +549,7 @@ local function squareCell(view, parent, opts)
     iconBox:SetHeightOverride(opts.icon)
     bg:SetContent(iconBox)
 
-    local c = { square = true, sizeBox = sizeBox, art = art, edge = edge, bg = bg, iconArea = iconBox }
+    local c = { square = true, sizeBox = sizeBox, art = art, artKind = opts.art, edge = edge, bg = bg, iconArea = iconBox }
     slotArt(c)
     if opts.note then
         local label = newText(view, 10, COLOR.text, 'medium')
@@ -485,7 +578,7 @@ local function nativeCell(view, parent, action, note)
 end
 
 local function nativeTab(view, parent, action)
-    local c = squareCell(view, parent, { width = TAB_SIZE, height = TAB_SIZE, icon = TAB_SIZE - 14, action = action })
+    local c = squareCell(view, parent, { width = TAB_SIZE, height = TAB_SIZE, icon = TAB_SIZE - 14, action = action, art = 'tab' })
     c.tab = true
     return c
 end
@@ -817,7 +910,7 @@ local function placeWindow(panel, armour, window)
     end)
     if stretched then
         -- Offsets are margins with stretched anchors: use the grid's own place.
-        log('inventory layout uses stretched anchors; the transmog window opens over the grid')
+        debug('inventory layout uses stretched anchors; the transmog window opens over the grid')
         slot:SetOffsets(o)
         return
     end
@@ -1202,7 +1295,7 @@ function U.mount(panel)
     view.menu = frame
     frame:SetVisibility(COLLAPSED)
     view.menuOpen = false
-    log('mounted on ' .. key .. (view.dock and ' (RSE-Dock icon)' or ''))
+    debug('mounted on ' .. key .. (view.dock and ' (RSE-Dock icon)' or ''))
 end
 
 -- -------------------------------------------------------------------- tick
@@ -1355,7 +1448,7 @@ function U.forget()
         if view.native and view.menuOpen then pcall(os.remove, S.file(UI_LOCK)) end
     end
     U.views, U.actions = {}, {}
-    slotSource, slotSearched = nil, -math.huge
+    slotSource, emptySource, slotSearched = nil, nil, -math.huge
 end
 function U.flush()
     local list = pending

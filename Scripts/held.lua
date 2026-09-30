@@ -33,6 +33,7 @@ local function valid(o) local k = type(o) return (k == 'userdata' or k == 'table
 local function full(o) return valid(o) and o:GetFullName() or '' end
 local function path(o) return full(o):match('^%S+%s+(.+)$') or '' end
 local function log(s) print('[RSE-Transmog] ' .. tostring(s) .. '\n') end
+local function debug(s) if Cfg.Debug then log(s) end end
 local function get(fn) local ok, v = pcall(fn) if ok then return v end return nil end
 local function nameOf(o)
     local s = get(function() return o:GetFName():ToString() end)
@@ -64,7 +65,7 @@ do
     if id and id:match('^[%w_]+$') then
         Hd.blocked[id] = true
         log('the game closed while applying weapon look ' .. id .. '; that look is disabled for this session. '
-            .. 'Please send UE4SS.log (the "weapon:" lines above the crash) with your bug report.')
+            .. 'Please send UE4SS.log with your bug report (with Debug on, the "weapon:" lines above the crash name the step).')
     end
 end
 
@@ -74,8 +75,8 @@ local function lock(id)
 end
 local function unlock() pcall(os.remove, S.file(LOCK)) end
 
--- Breadcrumbs: the last "weapon:" line before a crash names the step.
-local function trace(s) log('weapon: ' .. s) end
+-- Breadcrumbs (Debug): the last "weapon:" line before a crash names the step.
+local function trace(s) debug('weapon: ' .. s) end
 
 local classCache = {}
 local function class(p)
@@ -648,7 +649,7 @@ local function cleanupStale(actor)
             showReal({ comp = comp })
         end
     end
-    if removed > 0 then log('removed ' .. removed .. ' leftover weapon look mesh(es) from a previous load') end
+    if removed > 0 then debug('removed ' .. removed .. ' leftover weapon look mesh(es) from a previous load') end
 end
 
 -- ----------------------------------------------------------------- public

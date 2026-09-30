@@ -125,7 +125,7 @@ local function onClientMessage(pc, text)
     N.stats.clientHandled = N.stats.clientHandled + 1
     local w = words(text)
     if w[2] == 'ack' then
-        if not N.acked then log('server runs RSE-Transmog: looks are shared') end
+        if not N.acked then debug('server runs RSE-Transmog: looks are shared') end
         N.acked = true
         client.pendingState = true
     elseif w[2] == 'set' and #w == 5 then

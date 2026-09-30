@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+- **Grid slots match the inventory's empty slots.** The look cells now copy what an empty inventory slot draws (plain dark with a faint grain) instead of the item slot frame. The tab column keeps the item slot frame. If no empty inventory slot is found (full bag), the cells fall back to the frame, then to flat dark.
+- **RSE-ModMenu support.** New `modmenu.json`: Window style, Share looks, Show other players' looks and Debug log can be changed in game (Esc > MODS). Debug applies at once; the others after a restart. The settings stay in `Scripts\config.lua`.
+- **Quieter log.** With `Debug = false` (the default), the log only shows the version line, errors and warnings. Mount, slot art, character load, server handshake and weapon-look step lines need `Debug = true`. The weapon crash guard message still always shows.
+- New console command `transmog_slotart` (for developers): logs every candidate slot brush of a live empty and filled inventory slot. Open the inventory first.
+
 ## 1.2.2
 - Fixed the same crash risk as RSE-Dock 1.2.1. An inventory panel queued during a map load could belong to the previous world (the main menu). Each load now empties the queue and drops panels made before it started.
 

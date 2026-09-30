@@ -345,7 +345,7 @@ local function loadCharacter(pc)
     if guid ~= V.guid then
         local data = S.load(guid)
         V.guid, V.sel, V.seen = guid, data.sel, data.seen
-        log('character ' .. guid:sub(1, 8) .. ' loaded')
+        debug('character ' .. guid:sub(1, 8) .. ' loaded')
         -- A weapon look that crashed the game last time is dropped from the choices.
         local dropped = false
         for key, value in pairs(V.sel) do
@@ -421,7 +421,7 @@ function V.tick()
                 end
             end
             for _, key in ipairs(dropped) do
-                log('dropped ' .. key .. '=' .. V.sel[key] .. ': this character does not know that look')
+                debug('dropped ' .. key .. '=' .. V.sel[key] .. ': this character does not know that look')
                 V.sel[key] = nil
             end
             if #dropped > 0 then save() end

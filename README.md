@@ -41,14 +41,14 @@ Vortex: install as a normal mod. If the button does not appear, check that the f
 Delete the `RSE-Transmog` folder. Your character immediately shows the real gear again, and nothing needs to be cleaned up.
 
 ## Settings
-Open `Scripts\config.lua` in a text editor:
+With **RSE-ModMenu** installed, change them in game: Esc > MODS > RSE-Transmog. Otherwise open `Scripts\config.lua` in a text editor. Only `Debug` applies at once; the others apply after restarting the game.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `UIStyle` | `"native"` | `"native"`: its own window beside the inventory, in the inventory's frame art. `"classic"`: the compact list with names, over the inventory grid. If the game closes while the native window is open, the next launch uses the classic look once and says so in the log. |
 | `Multiplayer` | `true` | Share your looks with other mod users and see theirs |
 | `ShowOthers` | `true` | `false` always shows other players' real gear |
-| `Debug` | `false` | Extra lines in `ue4ss\UE4SS.log` |
+| `Debug` | `false` | Extra lines in `ue4ss\UE4SS.log`. Off: only the version line, errors and warnings |
 
 ## Multiplayer
 Looks are shared between players who run the mod:
@@ -67,7 +67,7 @@ The host or server checks every message: known slots, well-formed ids, and lengt
 Items that need an entitlement (for example Early Adopter, Community, Gilded or Deluxe items) are only listed if your character has worn them. The mod never unlocks paid content.
 
 ## FAQ
-**The button is missing.** Make sure UE4SS loads: `ue4ss\UE4SS.log` should contain `[RSE-Transmog] v1.2.0 loaded`.
+**The button is missing.** Make sure UE4SS loads: `ue4ss\UE4SS.log` should contain `[RSE-Transmog] v1.2.3 loaded`.
 
 **A slot says "Nothing equipped here".** The transmog changes the look of an equipped item. Equip any item in that slot and your saved choice applies automatically.
 
@@ -105,11 +105,11 @@ RSE-Transmog is based on [Dragonwilds Wardrobe](https://www.nexusmods.com/runesc
   - `config.lua`: user settings.
 
 ### QA checklist
-1. After launch, the log shows `v1.2.0 loaded` and no `UI:`/`visual:`/`net:` errors.
+1. After launch, the log shows `v1.2.3 loaded` and no `UI:`/`visual:`/`net:` errors.
 2. Opening the inventory shows the button. Closing it hides the button and the panel. The panel covers the inventory grid exactly at 1080p, 1440p and ultrawide.
 3. Native look: the game's panel frame, icon tabs that follow the equipped item's icon, and a grid of crafting-style icon slots. Hover shows the look's name below the grid. The worn look is shown selected, and Original and Hide carry a label. No recipe tooltip appears on hover. Classic look (`UIStyle = "classic"`): icons and names in two columns with a gold highlight. In both looks, search filters the list and the count updates.
 4. Clicking a look changes both the world model and the inventory preview. Character stats and armour values stay the same.
-5. Only looks with a learned recipe or a previously worn or held item are listed. A look becomes available after learning its recipe and reopening the tab. A look saved by an older version that the character provably does not know is dropped on load, with a log line.
+5. Only looks with a learned recipe or a previously worn or held item are listed. A look becomes available after learning its recipe and reopening the tab. A look saved by an older version that the character provably does not know is dropped on load, with a log line when `Debug` is on.
 6. Hide works for Head and Cape. The game's own "hide helmet" setting keeps working.
 7. The look is restored after changing gear, unequipping and re-equipping, dying and respawning, leaving and rejoining the world, and restarting the game.
 8. Two characters keep separate choices, one file each in `saves\`.
