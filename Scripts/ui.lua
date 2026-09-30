@@ -1473,6 +1473,12 @@ end
 function U.flush()
     local list = pending
     pending = {}
+    -- Panels that lived through the load too: the game instance owns the
+    -- inventory panel and does not always make a new one, so no new-object
+    -- event comes. Without this its window stayed on screen with nothing
+    -- behind it (hover sounds, no highlight, no clicks). Mounting a panel
+    -- already mounted does nothing; leftovers are removed first.
+    for _, panel in ipairs(FindAllOf('InventoryMainPanel') or {}) do list[#list + 1] = panel end
     for _, panel in ipairs(list) do
         local ok, err = pcall(U.mount, panel)
         if not ok then log('mount: ' .. tostring(err)) end
