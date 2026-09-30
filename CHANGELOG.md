@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.8
+- **Relay diagnostics.** The server logs one line per session when a player's first message arrives and when it answers a hello, whatever the Debug setting. It also logs one line for each reason it would drop a message silently: the message doesn't count as reaching the server, the player has no player ID, the text can't be read, or the answer can't be sent. The player's game says once when the server never answered, with a pointer to those lines. Before this, "others cannot see my looks" left nothing in either log.
+
 ## 1.2.7
 - **Fixed freezes when switching item types.** On each switch the mod checked which looks you know. Any look without a known recipe made it re-read all ~900 of the game's recipes, every time (at most every 5 s). It now reads only recipes it has not seen before. It also remembers looks that have no recipe, and checks those again only once a minute.
 - With Debug on, any step of a switch that takes 30 ms or more is logged ("slow switch to ...").

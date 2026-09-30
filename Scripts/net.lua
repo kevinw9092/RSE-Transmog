@@ -34,6 +34,11 @@ local function full(o) return valid(o) and o:GetFullName() or '' end
 local function get(fn) local ok, v = pcall(fn) if ok then return v end return nil end
 local function log(s) print('[RSE-Transmog/Net] ' .. tostring(s) .. '\n') end
 local function debug(s) if Cfg.Debug then log(s) end end
+-- One line per session for each relay milestone or failure, whatever Debug
+-- says: a dedicated server has no console, and "players cannot see each
+-- other's looks" needs to show where the relay stops.
+local told = {}
+local function once(key, s) if not told[key] then told[key] = true log(s) end end
 local function enabled() return Cfg.Multiplayer ~= false end
 
 local function alive(actor)
@@ -99,7 +104,10 @@ function N.clientTick(pc, sel)
         client.tries = client.tries + 1
         client.nextHello = now + HELLO_EVERY
         sendNow(pc, N.PROTO .. ' hi')
-        if client.tries == HELLO_TRIES then debug('server did not answer; looks stay local') end
+        if client.tries == HELLO_TRIES then
+            once('noanswer', 'server did not answer ' .. HELLO_TRIES .. ' hellos; looks stay local '
+                .. '(the server needs RSE-Transmog with Multiplayer = true; its UE4SS.log says why with "relay:" lines)')
+        end
     end
     if N.acked and client.pendingState then
         client.pendingState = nil
@@ -147,7 +155,9 @@ end
 local server = { players = {} } -- pcName -> { pc, id, sel, subscribed, tokens, stamp }
 
 local function tell(pc, message)
-    pcall(function() pc:ClientMessage(message, FName('None'), 0.0) end)
+    local ok, err = pcall(function() pc:ClientMessage(message, FName('None'), 0.0) end)
+    if not ok then once('tell', 'relay: could not message a player: ' .. tostring(err)) end
+    return ok
 end
 
 local function broadcast(message)
@@ -163,13 +173,24 @@ local function onServerExec(pc, text)
     if authority == nil then authority = get(function() return pc.Role end) == 3 end -- ROLE_Authority
     if authority ~= true then
         -- UE4SS also reports our own outgoing call on a client: not a problem.
+        -- A message from another player's controller without authority is.
+        if get(function() return pc:IsLocalController() end) ~= true then
+            once('authority', 'relay: a player message arrived, but this machine does not count as the server '
+                .. '(HasAuthority=' .. tostring(get(function() return pc:HasAuthority() end))
+                .. ', Role=' .. tostring(get(function() return pc.Role end)) .. '); not relayed')
+        end
         N.stats.sent = N.stats.sent + 1
         return
     end
     N.stats.serverHandled = N.stats.serverHandled + 1
+    once('first', 'relay: messages from players arrive; this machine relays looks')
     local key = full(pc)
     local id = playerId(pc)
-    if not id then return end
+    if not id then
+        once('noid', 'relay: a message came from a player without a PlayerId; ignored ('
+            .. tostring(get(function() return pc.PlayerState end)) .. ')')
+        return
+    end
     local p = server.players[key]
     if not p or p.id ~= id then
         p = { pc = pc, id = id, sel = {}, count = 0, tokens = 40, stamp = os.clock() }
@@ -185,7 +206,7 @@ local function onServerExec(pc, text)
     local w = words(text)
     if w[2] == 'hi' then
         p.subscribed = true
-        tell(pc, N.PROTO .. ' ack')
+        if tell(pc, N.PROTO .. ' ack') then once('ack', 'relay: answered a hello (player ' .. id .. ')') end
         for _, other in pairs(server.players) do
             if other ~= p then
                 for k, v in pairs(other.sel) do tell(pc, string.format('%s set %d %s %s', N.PROTO, other.id, k, v)) end
@@ -244,7 +265,11 @@ function N.hook()
         if not enabled() then return end
         N.stats.serverHook = N.stats.serverHook + 1
         local text = textOf(message)
-        if not text then N.stats.lastError = 'ServerExec text unreadable' return end
+        if not text then
+            N.stats.lastError = 'ServerExec text unreadable'
+            once('unreadable', 'relay: a ServerExec message could not be read')
+            return
+        end
         local okHandle, handleErr = pcall(onServerExec, ctx:get(), text)
         if not okHandle then
             N.stats.lastError = tostring(handleErr)
