@@ -1,13 +1,43 @@
--- Dragonwilds Wardrobe: visual-only transmog for RuneScape: Dragonwilds.
-local VERSION = '1.0.0'
+-- RSE-Transmog (RuneScape Enhanced): visual-only transmog for RuneScape: Dragonwilds.
+-- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
+-- The same folder runs on clients, listen hosts and dedicated servers; on a
+-- server without a local player only the multiplayer relay (net.lua) works.
+local VERSION = '1.1.0'
 local V = require('visual')
 local U = require('ui')
-local function log(s) print('[DragonwildsWardrobe] ' .. tostring(s) .. '\n') end
+local N = require('net')
+local function log(s) print('[RSE-Transmog] ' .. tostring(s) .. '\n') end
 
 local ok, err = pcall(U.start)
 if not ok then log('UI startup: ' .. tostring(err)) end
 ok, err = pcall(V.hook)
 if not ok then log('hooks: ' .. tostring(err)) end
+ok, err = pcall(N.hook)
+if not ok then log('net hooks: ' .. tostring(err)) end
+
+-- "transmog_status" in the game console prints what the mod sees (for bug reports).
+if type(RegisterConsoleCommandHandler) == 'function' then
+    pcall(RegisterConsoleCommandHandler, 'transmog_status', function(_, _, ar)
+        local function out(line)
+            log(line)
+            pcall(function() ar:Log('[RSE-Transmog] ' .. line) end)
+        end
+        local okDescribe, describeErr = pcall(function()
+            V.describe(out)
+            N.describe(out)
+        end)
+        if not okDescribe then out('status failed: ' .. tostring(describeErr)) end
+        return true
+    end)
+    -- Developer tool: dumps the game's UI building blocks to ui-dump.txt.
+    pcall(RegisterConsoleCommandHandler, 'transmog_dumpui', function(_, _, ar)
+        local okDump, result = pcall(function() return require('uidump').run() end)
+        local line = okDump and tostring(result) or ('dump failed: ' .. tostring(result))
+        log(line)
+        pcall(function() ar:Log('[RSE-Transmog] ' .. line) end)
+        return true
+    end)
+end
 
 -- One game-thread loop drives everything: the equipment watchdog (four
 -- pointer reads), the wardrobe panel and hover highlight while it is open.
@@ -20,6 +50,8 @@ local function step()
     if frame % 2 == 0 then
         local okVisual, visualError = pcall(V.tick)
         if not okVisual then log('visual: ' .. tostring(visualError)) end
+        local okNet, netError = pcall(N.serverTick)
+        if not okNet then log('net: ' .. tostring(netError)) end
         local okUi, uiError = pcall(U.tick)
         if not okUi then log('UI: ' .. tostring(uiError)) end
     end

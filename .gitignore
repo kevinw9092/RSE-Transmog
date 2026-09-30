@@ -1,0 +1,13 @@
+# Player data the mod writes at runtime: one file per character, plus caches
+saves/*
+!saves/README.txt
+# Per-character files from Dragonwilds Wardrobe, before they moved to saves\
+Scripts/wardrobe-*.txt
+# Runtime lock and temporary files
+*.lock
+*.tmp
+# Output of the transmog_dumpui console command
+ui-dump.txt
+# Temporary files RSE-ModMenu writes while saving settings
+*.modmenu-tmp
+*.modmenu-old
