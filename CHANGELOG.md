@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+- **Looks now sync on dedicated servers.** Players' games sent their looks to the server with the engine's `ServerExec` debug command. A release dedicated server drops that command before any mod sees it, so the server never heard from anyone, and nobody saw anyone else's looks. The 1.2.9 logs showed this: a joining player's `ServerAcknowledgePossession` reached the server's mods, but `ServerExec` never did. Players now send with `ServerNotifyLoadedWorld`. It's a reliable engine message that the server acts on only during a seamless map change, and only for the new map's name, which a Transmog message never is. The server still accepts the old `ServerExec` messages from players on older versions.
+- **Update both sides.** The server and every player need 1.3.0 for looks to sync.
+- Removed the 1.2.9 test hooks. The one-line `relay:` log messages stay.
+
 ## 1.2.9
 - **More relay diagnostics.** 1.2.8 showed that no player message reaches Transmog on the dedicated server. RSE-Toolbag's server sends "ready" without waiting for a message, so it never showed whether player-to-server messages arrive at all. The server now logs once when any player's `ServerExec` arrives, whatever its text. It also logs once when two messages every game sends while joining arrive (`ServerAcknowledgePossession`, `ServerNotifyLoadedWorld`). Together these show whether only `ServerExec` is lost, or every player message to the server.
 

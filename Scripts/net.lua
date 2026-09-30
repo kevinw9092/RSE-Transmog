@@ -1,9 +1,14 @@
 -- Multiplayer sync: lets players who run the mod see each other's looks.
 --
--- Transport uses two stock engine RPCs that every PlayerController has and
--- the game itself never uses in shipping builds:
---   client -> server   APlayerController::ServerExec(FString)       (max 128 chars)
+-- Transport uses two stock engine RPCs that every PlayerController has:
+--   client -> server   APlayerController::ServerNotifyLoadedWorld(FName)
 --   server -> client   APlayerController::ClientMessage(FString, ...)
+-- ServerNotifyLoadedWorld is reliable and does nothing on the server unless a
+-- seamless travel is in progress AND the name is the new world's package, which
+-- a message never is. Until 1.3.0 the client used ServerExec(FString), which a
+-- shipping dedicated server drops before any hook sees it (1.2.9 logs: a
+-- joining player's ServerAcknowledgePossession reached the mods, ServerExec
+-- never did). The server still accepts ServerExec from older clients.
 -- The server (listen host or dedicated server with UE4SS) keeps each
 -- player's selection and relays it to every client that said hello. Only
 -- selection ids travel; stats, inventory and replicated game state are
@@ -24,7 +29,10 @@ local N = {
     remote = {},      -- playerId -> { key -> value }   (what other players chose)
     acked = false,    -- the server runs the mod
 }
-local MAX_LEN = 120   -- ServerExec rejects (and disconnects) above 128
+local MAX_LEN = 120   -- well under an FName's limit (and ServerExec's 128 for old clients)
+-- Client -> server RPCs the server listens on (the first is the one sent).
+local SEND_RPC = 'ServerNotifyLoadedWorld'
+local RECEIVE_RPCS = { 'ServerNotifyLoadedWorld', 'ServerExec' }
 local MAX_KEYS = 24
 local HELLO_EVERY, HELLO_TRIES = 5, 6
 local SEND_PER_TICK = 6
@@ -73,7 +81,7 @@ local client = { pc = nil, pcName = nil, tries = 0, nextHello = 0, outbox = {} }
 
 local function sendNow(pc, message)
     if #message > MAX_LEN then return false end
-    local ok, err = pcall(function() pc:ServerExec(message) end)
+    local ok, err = pcall(function() pc[SEND_RPC](pc, FName(message)) end)
     if not ok then debug('send failed: ' .. tostring(err)) end
     return ok
 end
@@ -260,41 +268,28 @@ end
 -- "server has no mod".
 N.stats = { serverHook = 0, sent = 0, serverHandled = 0, clientHook = 0, clientHandled = 0, lastError = nil }
 
--- Whether a hook call came from another machine's player (a message that
--- arrived here) rather than our own outgoing call.
-local function fromRemote(ctx)
-    local pc = get(function() return ctx:get() end)
-    return valid(pc) and get(function() return pc:IsLocalController() end) ~= true
-end
-
 function N.hook()
-    -- Control (1.2.9): messages every player's game sends the server while
-    -- joining. If these are logged but ServerExec never is, player-to-server
-    -- messages do reach the mods here and only ServerExec is lost on the way;
-    -- if neither is, no incoming player message reaches the mods at all.
-    for _, fn in ipairs({ 'ServerAcknowledgePossession', 'ServerNotifyLoadedWorld' }) do
-        pcall(RegisterHook, '/Script/Engine.PlayerController:' .. fn, function(ctx)
-            if fromRemote(ctx) then once('control ' .. fn, 'relay: control: a player\'s ' .. fn .. ' reached the mods here') end
+    for _, rpc in ipairs(RECEIVE_RPCS) do
+        local ok, err = pcall(RegisterHook, '/Script/Engine.PlayerController:' .. rpc, function(ctx, message)
+            if not enabled() then return end
+            N.stats.serverHook = N.stats.serverHook + 1
+            local text = textOf(message)
+            if not text then
+                N.stats.lastError = rpc .. ' text unreadable'
+                once('unreadable ' .. rpc, 'relay: a ' .. rpc .. ' message could not be read')
+                return
+            end
+            -- Anything else sent on these RPCs (a real seamless travel) is not ours.
+            if text:sub(1, #N.PROTO + 1) ~= N.PROTO .. ' ' then return end
+            local okHandle, handleErr = pcall(onServerExec, ctx:get(), text)
+            if not okHandle then
+                N.stats.lastError = tostring(handleErr)
+                log('server: ' .. tostring(handleErr))
+            end
         end)
+        if not ok then log(rpc .. ' hook unavailable: ' .. tostring(err)) end
     end
-    local ok, err = pcall(RegisterHook, '/Script/Engine.PlayerController:ServerExec', function(ctx, message)
-        if fromRemote(ctx) then once('arrived', 'relay: a ServerExec from a player arrived') end
-        if not enabled() then return end
-        N.stats.serverHook = N.stats.serverHook + 1
-        local text = textOf(message)
-        if not text then
-            N.stats.lastError = 'ServerExec text unreadable'
-            once('unreadable', 'relay: a ServerExec message could not be read')
-            return
-        end
-        local okHandle, handleErr = pcall(onServerExec, ctx:get(), text)
-        if not okHandle then
-            N.stats.lastError = tostring(handleErr)
-            log('server: ' .. tostring(handleErr))
-        end
-    end)
-    if not ok then log('ServerExec hook unavailable: ' .. tostring(err)) end
-    ok, err = pcall(RegisterHook, '/Script/Engine.PlayerController:ClientMessage', function(ctx, message)
+    local ok, err = pcall(RegisterHook, '/Script/Engine.PlayerController:ClientMessage', function(ctx, message)
         if not enabled() then return end
         N.stats.clientHook = N.stats.clientHook + 1
         local text = textOf(message)

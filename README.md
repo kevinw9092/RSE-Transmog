@@ -59,7 +59,7 @@ Looks are shared between players who run the mod:
 | mod | mod | no mod | your real gear |
 | mod | no mod | anything | your real gear (the mod stays client-side) |
 
-Only the ids of the looks you chose travel over the network. They use two built-in engine messages (`ServerExec` and `ClientMessage`) that the game itself does not use. Your equipment, stats and the game's replicated state are never changed, so players without the mod are not affected. When the host or server has no mod, your game sends six short hello messages after joining and then stays silent.
+Only the ids of the looks you chose travel over the network. They use two built-in engine messages: `ServerNotifyLoadedWorld` from your game to the server, and `ClientMessage` back. The game only uses the first during a seamless map change, and ignores any name that isn't the new map's. Before 1.3.0 the mod used `ServerExec`, which dedicated servers drop, so looks never synced there. Your equipment, stats and the game's replicated state are never changed, so players without the mod are not affected. When the host or server has no mod, your game sends six short hello messages after joining and then stays silent.
 
 The host or server checks every message: known slots, well-formed ids, and length and rate limits. It relays messages only to players who run the mod. Players who join later receive everyone's current looks.
 
@@ -97,7 +97,7 @@ RSE-Transmog is based on [Dragonwilds Wardrobe](https://www.nexusmods.com/runesc
 - Module overview:
   - `visual.lua`: per-character renderer for the local player and other players. Armour pointer swap, `OnRep` refresh and restore; watchdog; hooks; preview sync.
   - `held.lua`: weapon looks. The real weapon meshes stop rendering and nothing else about them changes. Local ghost meshes, built from the chosen weapon Blueprint's component templates, are attached in their place.
-  - `net.lua`: multiplayer relay over `ServerExec` and `ClientMessage`.
+  - `net.lua`: multiplayer relay over `ServerNotifyLoadedWorld` and `ClientMessage`.
   - `catalog.lua`: armour and weapon appearance lists, weapon categories, runtime discovery, recipe/unlock lookup.
   - `ui.lua`: Transmog window (native and classic).
   - `store.lua`: per-character files.
