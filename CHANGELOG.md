@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+- **Fixed crashes from stale cached game objects after the game unloaded them.** The mod kept some game objects in its own memory between uses: item icons, weapon-look mesh templates, fonts and widget classes. The game can unload an object that nothing of its own uses, and the mod's copy then pointed at freed memory. The next use crashed the game. This caused the crashes on rejoining a world, just after the inventory appeared (icon), and during play when a weapon look was applied (weapon template).
+- The mod now keeps only names and paths, and looks the object up again each time it needs it. This covers item icons, the inventory and armour looks shown on your character, weapon-look templates, recipes, fonts, widget classes, the inventory slots used for the slot art, and the inventory preview.
+- All of these are also cleared on every map load.
+- After a map load, the mod now waits for 10 of its own ticks as well as 3 seconds. Right after a load the game can spend several seconds in a single frame, and a time-only wait could end in the very next frame.
+
 ## 1.2.4
 - The look cells now look like the inventory's empty slots: a slightly darker square over the window's own grain, with no framed slot art. The game's empty slots draw no texture of their own; every slot brush is empty, as `transmog_slotart` showed. The tab column keeps its slot art.
 

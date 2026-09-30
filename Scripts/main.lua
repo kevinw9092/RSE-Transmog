@@ -2,10 +2,12 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.2.4'
+local VERSION = '1.2.5'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
+local C = require('catalog')
+local Hd = require('held')
 local function log(s) print('[RSE-Transmog] ' .. tostring(s) .. '\n') end
 
 local ok, err = pcall(U.start)
@@ -59,11 +61,17 @@ end
 -- has settled. Calling into the old world's characters or widgets while they
 -- are torn down crashes the game natively (a pcall cannot catch it); two
 -- crashes on leave-and-rejoin (2026-09-30) happened ~2 s into a world load.
+-- The settle also counts loop ticks: right after a load the game can spend
+-- seconds in a single frame (3.2 s on 2026-09-30 18:30), and a clock-only
+-- settle would then end in the very first frame after it. The loop runs at
+-- most once a frame, so SETTLE_TICKS ticks means that many real frames.
 local SETTLE = 3
-local idleUntil = 0
+local SETTLE_TICKS = 10
+local idleUntil, idleTicks = 0, 0
 local function forgetWorld(pause)
-    for _, f in ipairs({ V.forget, U.forget, N.forget }) do pcall(f) end
+    for _, f in ipairs({ V.forget, U.forget, N.forget, C.forget, Hd.forgetCaches }) do pcall(f) end
     idleUntil = os.clock() + pause
+    idleTicks = SETTLE_TICKS
     U.idle = true
 end
 pcall(RegisterLoadMapPreHook, function()
@@ -90,7 +98,8 @@ local frame = 0
 local function step()
     modMenuSync()
     if idleUntil > 0 then
-        if os.clock() < idleUntil then return end
+        if idleTicks > 0 then idleTicks = idleTicks - 1 end
+        if os.clock() < idleUntil or idleTicks > 0 then return end
         idleUntil = 0
         U.idle = false
         local okFlush, flushError = pcall(U.flush)

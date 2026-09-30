@@ -78,14 +78,11 @@ local function unlock() pcall(os.remove, S.file(LOCK)) end
 -- Breadcrumbs (Debug): the last "weapon:" line before a crash names the step.
 local function trace(s) debug('weapon: ' .. s) end
 
-local classCache = {}
+-- Looked up by path each time, never cached: a kept object can have been
+-- unloaded by the next use (see catalog.lua, "Game objects are never kept").
 local function class(p)
-    local c = classCache[p]
-    if not valid(c) then
-        c = StaticFindObject(p)
-        classCache[p] = c
-    end
-    return c
+    local c = get(function() return StaticFindObject(p) end)
+    return valid(c) and c or nil
 end
 
 local function alive(actor)
@@ -352,10 +349,45 @@ end
 
 -- Visible mesh templates of a weapon Blueprint: { name, tpl, parent, socket, via }.
 -- hints: component names worth trying (the real weapon's mesh names).
-local templateCache = {}
+--
+-- The cache keeps PLAIN DATA only: per class path, each template's name,
+-- parent, socket, route and the template's own object path. The templates are
+-- looked up again from those paths on every call. Keeping the template
+-- objects crashed the game (dump 2026-09-30 18:50): the weapon Blueprint was
+-- unloaded and loaded again under the same name, and the cache handed back
+-- the old, freed templates.
+local templateCache = {} -- class path -> { { name, tplPath, parent, socket, via } }
+
+-- Live templates for cached plain entries, or nil if any of them is gone.
+local function resolveTemplates(entries)
+    local out = {}
+    for _, e in ipairs(entries) do
+        local tpl = get(function() return StaticFindObject(e.tplPath) end)
+        if not (valid(tpl) and isMesh(tpl)) then return nil end
+        out[#out + 1] = { name = e.name, tpl = tpl, parent = e.parent, socket = e.socket, via = e.via }
+    end
+    return out
+end
+
+local function plainTemplates(visual)
+    local out = {}
+    for _, t in ipairs(visual) do
+        local tplPath = path(t.tpl)
+        if tplPath == '' then return nil end
+        out[#out + 1] = { name = t.name, tplPath = tplPath, parent = t.parent, socket = t.socket, via = t.via }
+    end
+    return out
+end
+Hd.plainTemplates, Hd.resolveTemplates = plainTemplates, resolveTemplates
+
 local function visualTemplates(cls, hints)
-    local key = full(cls)
-    if templateCache[key] then return templateCache[key] end
+    local key = path(cls)
+    local cached = templateCache[key]
+    if cached then
+        local live = resolveTemplates(cached)
+        if live then return live end
+        templateCache[key] = nil
+    end
     local byName, order = {}, {}
     local function put(t)
         if t.name == '' then return end
@@ -398,7 +430,7 @@ local function visualTemplates(cls, hints)
         visual = collect()
     end
     -- Only cache real results: an empty one may just mean the hints were wrong.
-    if #visual > 0 then templateCache[key] = visual end
+    if #visual > 0 and key ~= '' then templateCache[key] = plainTemplates(visual) end
     return visual
 end
 
@@ -712,6 +744,12 @@ function Hd.forget(state)
     if state then restore(state) end
 end
 
+-- Map load: drop the template cache (plain data, so belt and braces).
+function Hd.forgetCaches()
+    templateCache = {}
+end
+Hd.visualTemplates = visualTemplates
+
 -- Console diagnostics: what the mod sees on a held weapon and on its chosen look.
 function Hd.describe(equipment, side, sel, out)
     local actor = heldActor(equipment, side)
@@ -740,7 +778,7 @@ function Hd.describe(equipment, side, sel, out)
         if valid(cls) then
             local scs = get(function() return cls.SimpleConstructionScript end)
             out(string.format('   look SCS=%s rootNodes=%d', full(scs), #list(get(function() return scs.RootNodes end))))
-            templateCache[full(cls)] = nil
+            templateCache[path(cls)] = nil
             for _, t in ipairs(visualTemplates(cls, hints)) do
                 out(string.format('   look template %s via %s parent=%s socket=%s mesh=%s', t.name, t.via,
                     tostring(t.parent), tostring(t.socket), full(meshAsset(t.tpl))))

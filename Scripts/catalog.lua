@@ -183,6 +183,7 @@ local SOURCES = {
 
 local function valid(o) local k = type(o) return (k == 'userdata' or k == 'table') and o:IsValid() == true end
 local function full(o) return valid(o) and o:GetFullName() or '' end
+local function get(fn) local ok, v = pcall(fn) if ok then return v end return nil end
 local function textOf(value)
     local ok, s = pcall(function() return value:ToString() end)
     if ok and type(s) == 'string' then return s end
@@ -269,7 +270,7 @@ local function discover()
         local slot = path and path:match(EQUIPMENT .. '(%a+)/')
         local id = path and path:match('%.([%w_]+)$')
         if slot and SOURCES[slot] and id and id:match('^ITEM_') and not byId[slot .. '|' .. id] then
-            addEntry(slot, { id = id, slot = slot, name = pretty(id), path = path, obj = obj, restricted = C.excluded(id) })
+            addEntry(slot, { id = id, slot = slot, name = pretty(id), path = path, restricted = C.excluded(id) })
         end
     end
     for _, obj in ipairs(FindAllOf('HeldEquipmentData') or {}) do
@@ -277,7 +278,7 @@ local function discover()
         local key = C.heldKey(obj)
         local id = path and path:match('%.([%w_]+)$')
         if key and id and id:match('^ITEM_') and not byId[key .. '|' .. id] then
-            addEntry(key, { id = id, slot = key, name = pretty(id), path = path, obj = obj, held = true, restricted = C.excluded(id) })
+            addEntry(key, { id = id, slot = key, name = pretty(id), path = path, held = true, restricted = C.excluded(id) })
         end
     end
 end
@@ -293,17 +294,36 @@ function C.find(key, id)
     return entry
 end
 
+-- Game objects are never kept between calls. The engine unloads assets and
+-- widgets that nothing of its own references, and a Lua table does not count:
+-- a cached object can be freed memory by the next use, and touching it
+-- crashes the game natively (dumps 2026-09-30 15:57 to 18:50: an icon texture
+-- cached here and a weapon template cached in held.lua). Caches hold object
+-- paths (strings); the object is looked up again, by path, each time.
+
+-- "Class /Path.To:Object" -> "/Path.To:Object", usable with StaticFindObject.
+local function pathOf(o) return (full(o):match('^%S+%s+(.+)$')) or '' end
+C.pathOf = pathOf
+
+-- The live object at `path`: found if loaded, else loaded. nil if neither.
+function C.resolve(path)
+    if type(path) ~= 'string' or path == '' then return nil end
+    local ok, obj = pcall(StaticFindObject, path)
+    if ok and valid(obj) then return obj end
+    local okL, loaded = pcall(LoadAsset, path)
+    if okL and valid(loaded) then return loaded end
+    ok, obj = pcall(StaticFindObject, path)
+    if ok and valid(obj) then return obj end
+    return nil
+end
+
 -- Returns the loaded WearableEquipmentData / HeldEquipmentData for an entry, or nil.
+-- Looked up by path on every call (see above); only the path is kept.
 function C.load(entry)
-    if not entry then return nil end
-    if valid(entry.obj) then return entry.obj end
-    if entry.missing then return nil end
+    if not entry or entry.missing then return nil end
     local class = entry.held and '/Script/Dominion.HeldEquipmentData' or '/Script/Dominion.WearableEquipmentData'
-    local ok, asset = pcall(LoadAsset, entry.path)
-    if ok and valid(asset) and asset:IsA(class) then
-        entry.obj = asset
-        return asset
-    end
+    local asset = C.resolve(entry.path)
+    if asset and get(function() return asset:IsA(class) end) == true then return asset end
     entry.missing = true
     return nil
 end
@@ -333,8 +353,9 @@ local function kismet()
     return StaticFindObject('/Script/Engine.Default__KismetSystemLibrary')
 end
 
+-- Path of an item data asset's icon texture (a string), or nil.
 local iconWarned = false
-local function loadIcon(asset)
+local function findIconPath(asset)
     local okSoft, soft = pcall(function() return asset.Icon end)
     if not okSoft or soft == nil then return nil end
     local path = iconPath(soft)
@@ -342,12 +363,12 @@ local function loadIcon(asset)
         local ok, s = pcall(function() return kismet():Conv_SoftObjectReferenceToString(soft):ToString() end)
         if ok and type(s) == 'string' and s ~= '' and s ~= 'None' then path = s end
     end
-    if path then
-        local ok, tex = pcall(LoadAsset, path)
-        if ok and valid(tex) then return tex end
-    end
+    if path and C.resolve(path) then return path end
     local ok, tex = pcall(function() return kismet():LoadAsset_Blocking(soft) end)
-    if ok and valid(tex) then return tex end
+    if ok and valid(tex) then
+        local p = pathOf(tex)
+        if p ~= '' then return p end
+    end
     if not iconWarned then
         iconWarned = true
         print(string.format('[RSE-Transmog] icons unavailable (soft=%s, path=%s)', tostring(soft), tostring(path)) .. '\n')
@@ -355,13 +376,19 @@ local function loadIcon(asset)
     return nil
 end
 
--- Icon texture of any loaded item data asset (cached per asset), or nil.
-local iconCache = {}
-function C.iconOf(asset)
+-- Icon texture PATH of any loaded item data asset (cached per asset path), or nil.
+local iconCache = {} -- item data path -> icon texture path, or false
+function C.iconPathOf(asset)
     if not valid(asset) then return nil end
-    local key = full(asset)
-    if iconCache[key] == nil then iconCache[key] = loadIcon(asset) or false end
+    local key = pathOf(asset)
+    if key == '' then return nil end
+    if iconCache[key] == nil then iconCache[key] = findIconPath(asset) or false end
     return iconCache[key] or nil
+end
+
+-- Icon texture of an item data asset, looked up fresh (never cached), or nil.
+function C.iconOf(asset)
+    return C.resolve(C.iconPathOf(asset))
 end
 
 -- Loads names, icons and ownership restrictions for one slot, once.
@@ -376,7 +403,7 @@ function C.prepare(slot)
         if asset then
             local title = textOf(asset.Name)
             if title and title ~= '' then entry.name = title end
-            entry.icon = loadIcon(asset)
+            entry.iconPath = C.iconPathOf(asset)
             pcall(function()
                 local ent = asset.EntitlementRequiredToEquip
                 if valid(ent) and not ent.bAutoUnlock then entry.restricted = true end
@@ -393,7 +420,7 @@ end
 -- over time, so a miss rebuilds the map (at most every 5 seconds).
 local recipes, recipesAt = nil, -math.huge
 local function recipeFor(asset)
-    local key = full(asset)
+    local key = pathOf(asset)
     if (not recipes or not recipes[key]) and os.clock() - recipesAt >= 5 then
         recipesAt = os.clock()
         recipes = {}
@@ -401,12 +428,16 @@ local function recipeFor(asset)
             pcall(function()
                 recipe.ItemsCreated:ForEach(function(_, element)
                     local item = element:get().ItemData
-                    if valid(item) then recipes[full(item)] = recipe end
+                    if valid(item) then recipes[pathOf(item)] = pathOf(recipe) end
                 end)
             end)
         end
     end
-    return recipes and recipes[key]
+    -- Only the recipe's path is kept; the recipe itself is looked up now.
+    local recipePath = recipes and recipes[key]
+    if not recipePath or recipePath == '' then return nil end
+    local ok, recipe = pcall(StaticFindObject, recipePath)
+    return ok and valid(recipe) and recipe or nil
 end
 
 -- Whether the character has access to a look: it has worn or held the item,
@@ -429,6 +460,13 @@ function C.refreshUnlocked(slot, seen, progress)
     for _, entry in ipairs(C[slot] or {}) do
         entry.unlocked = C.known(entry, seen, progress) == true
     end
+end
+
+-- Map load: the caches hold only paths, so this is belt and braces. The next
+-- world may have different content loaded, and they are cheap to rebuild.
+function C.forget()
+    iconCache = {}
+    recipes, recipesAt = nil, -math.huge
 end
 
 return C

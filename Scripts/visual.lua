@@ -90,7 +90,7 @@ local function newChar(pawn, equipment, isLocal)
     local ch = {
         pawn = pawn, pawnName = full(pawn), equipment = equipment, eqName = full(equipment), isLocal = isLocal,
         sel = EMPTY,
-        shown = {},       -- slot -> appearance object currently rendered by us
+        shown = {},       -- slot -> PATH of the appearance currently rendered by us (never the object)
         hidden = {},      -- slot -> true while we hide the slot
         sig = {},         -- slot -> mesh signature recorded after our last apply
         lastActual = {},  -- slot -> full name of the real equipped item
@@ -130,7 +130,9 @@ end
 local function swapShow(ch, slot, appearance, actual)
     local equipment = ch.equipment
     local prop = 'Current' .. slot .. 'Wearable'
-    local previous = ch.shown[slot] or actual
+    -- The previous look is kept as a path and looked up now: a kept data asset
+    -- can have been unloaded since (see catalog.lua).
+    local previous = (ch.shown[slot] and C.resolve(ch.shown[slot])) or actual
     V.guard = true
     equipment[prop] = appearance
     local ok, err = pcall(function() equipment['OnRep_' .. prop](equipment, previous) end)
@@ -141,7 +143,7 @@ local function swapShow(ch, slot, appearance, actual)
         return false, 'equipment pointer could not be restored'
     end
     if not ok then return false, tostring(err) end
-    ch.shown[slot] = appearance
+    ch.shown[slot] = C.pathOf(appearance)
     return true
 end
 
@@ -194,7 +196,7 @@ local function applyWearable(ch, slot, force)
     end
 
     if want == V.HIDDEN then
-        if ch.shown[slot] and ch.shown[slot] ~= actual then
+        if ch.shown[slot] and ch.shown[slot] ~= C.pathOf(actual) then
             swapShow(ch, slot, actual, actual)
         end
         hideSlot(ch, slot)
@@ -204,8 +206,8 @@ local function applyWearable(ch, slot, force)
             appearance = C.load(C.find(slot, want))
             if not appearance then return false, 'failed' end
         end
-        local current = ch.shown[slot] or actual
-        if force or ch.hidden[slot] or current ~= appearance then
+        local current = ch.shown[slot] or C.pathOf(actual)
+        if force or ch.hidden[slot] or current ~= C.pathOf(appearance) then
             local ok, err = swapShow(ch, slot, appearance, actual)
             if not ok then
                 log('apply ' .. slot .. ': ' .. tostring(err))
@@ -472,8 +474,17 @@ function V.syncPreview(forget)
     if not equipment then return end
     local okBody, bodyType = pcall(function() return pawn:GetPlayerCustomizationComponent():GetBodyType() end)
     if not okBody then return end
-    previews = previews or FindAllOf('PlayerCharacterPreview') or {}
-    for _, preview in ipairs(previews) do
+    -- The previews are remembered by path and looked up each time (never kept
+    -- as objects, see catalog.lua); FindAllOf again only once one is gone.
+    if not previews then
+        previews = {}
+        for _, found in ipairs(FindAllOf('PlayerCharacterPreview') or {}) do
+            local p = C.pathOf(found)
+            if p ~= '' then previews[#previews + 1] = p end
+        end
+    end
+    for _, previewPath in ipairs(previews) do
+        local preview = get(function() return StaticFindObject(previewPath) end)
         if not valid(preview) then previews = nil return end
         local key = full(preview)
         previewSig[key] = previewSig[key] or {}

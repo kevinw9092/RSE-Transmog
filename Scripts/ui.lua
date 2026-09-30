@@ -147,13 +147,10 @@ local function align(slot, h, v)
     if v then pcall(function() slot:SetVerticalAlignment(v) end) end
 end
 
-local fontCache = {}
+-- Fonts are looked up by path each time: a cached font object could be freed
+-- memory by the next use (see catalog.lua, "Game objects are never kept").
 local function font(kind)
-    if fontCache[kind] == nil then
-        local ok, f = pcall(LoadAsset, FONTS[kind])
-        fontCache[kind] = ok and valid(f) and f or false
-    end
-    return fontCache[kind] or nil
+    return C.resolve(FONTS[kind])
 end
 
 -- Styles must be set before the widget is added to a live parent.
@@ -187,14 +184,10 @@ local function setTextColor(tb, color)
 end
 
 -- Creates one of the game's Widget Blueprints.
-local classCache = {}
 local function userWidget(classPath)
-    local cls = classCache[classPath]
-    if not valid(cls) then
-        cls = LoadAsset(classPath)
-        assert(valid(cls), 'Game widget missing: ' .. classPath)
-        classCache[classPath] = cls
-    end
+    -- Looked up by path each time; never cached (see catalog.lua).
+    local cls = C.resolve(classPath)
+    assert(valid(cls), 'Game widget missing: ' .. classPath)
     local library = StaticFindObject('/Script/UMG.Default__WidgetBlueprintLibrary')
     local world = H.GetWorld()
     -- The owner must be a player controller of this world. While a world is
@@ -365,7 +358,9 @@ end
 -- never created.
 -- `transmog_slotart` in the console logs every candidate brush.
 local SLOT_CLASS = 'WBP_Inventory_ItemSlot_C'
-local slotSource, emptySource, slotSearched = nil, nil, -math.huge
+-- The source slots are remembered by path (strings) and looked up again on
+-- each use, never kept as objects (see catalog.lua).
+local slotSource, emptySource, slotSearched = nil, nil, -math.huge -- paths
 local slotArtLogged = {}
 
 local function paintable(brush)
@@ -379,26 +374,34 @@ local function isEmpty(s) return not valid(get(function() return s.ContainedItem
 
 -- Any live inventory slot, and an empty one (main grid first, then any), both
 -- searched again (at most every 2 s) once gone or no longer empty.
+local function lookUp(p)
+    if not p then return nil end
+    local o = get(function() return StaticFindObject(p) end)
+    return valid(o) and o or nil
+end
 local function findSlots()
-    local emptyOk = valid(emptySource) and isEmpty(emptySource)
-    if valid(slotSource) and emptyOk then return slotSource, emptySource end
+    local slot, empty = lookUp(slotSource), lookUp(emptySource)
+    local emptyOk = empty ~= nil and isEmpty(empty)
+    if slot and emptyOk then return slot, empty end
     if os.clock() - slotSearched >= 2 then
         slotSearched = os.clock()
-        local any, empty, emptyGrid
+        local any, emptyAny, emptyGrid
         for _, s in ipairs(get(function() return FindAllOf(SLOT_CLASS) end) or {}) do
             local n = valid(s) and name(s) or ''
             if n ~= '' and not n:find('Default__', 1, true) then
                 any = any or s
                 if not emptyGrid and isEmpty(s) then
                     -- The main grid's slots, not the quick-access bar's.
-                    if n:find('InventoryBody', 1, true) then emptyGrid = s else empty = empty or s end
+                    if n:find('InventoryBody', 1, true) then emptyGrid = s else emptyAny = emptyAny or s end
                 end
             end
         end
-        slotSource, emptySource = any, emptyGrid or empty
-        emptyOk = emptySource ~= nil
+        local e = emptyGrid or emptyAny
+        slotSource = any and C.pathOf(any) or nil
+        emptySource = e and C.pathOf(e) or nil
+        slot, empty, emptyOk = any, e, e ~= nil
     end
-    return valid(slotSource) and slotSource or nil, emptyOk and emptySource or nil
+    return slot, emptyOk and empty or nil
 end
 
 -- The brush a slot's root button (InternalRootButtonBase) draws now.
@@ -599,11 +602,15 @@ local function buttonCell(view, parent, title, action, minW, minH, labels)
     return { button = true, widget = b, sizeBox = b, slot = slot, hit = b, shownText = title }
 end
 
-local function setIcon(view, c, texture)
+-- `iconPath` is a texture path (a string); the texture is looked up now and
+-- never kept (see catalog.lua).
+local function setIcon(view, c, iconPath)
+    if not iconPath then return end
+    if c.square and c.iconPath == iconPath then return end
+    local texture = C.resolve(iconPath)
     if not texture then return end
     if c.square then
-        if c.iconTexture == texture then return end
-        c.iconTexture = texture
+        c.iconPath = iconPath
         pcall(function()
             local image = c.image
             if not valid(image) then
@@ -719,12 +726,13 @@ end
 
 -- Icon for a tab or the "Original" cell: the real item in that slot, or a
 -- typical item of that slot when it is empty.
+-- Returns the icon's texture path (a string), or nil.
 local function slotIcon(slot)
     local actual = V.actual(slot)
-    local icon = actual and C.iconOf(actual)
+    local icon = actual and C.iconPathOf(actual)
     if icon then return icon end
     local fallback = TAB_ICON[slot]
-    return fallback and C.iconOf(C.load(C.find(fallback[1], fallback[2]))) or nil
+    return fallback and C.iconPathOf(C.load(C.find(fallback[1], fallback[2]))) or nil
 end
 
 function U.refresh(view)
@@ -807,7 +815,7 @@ local function buildSlot(view, slot, hideable)
         else
             r.cell = newCell(view, grid, { height = 40, icon = true, action = action })
         end
-        if entry then setIcon(view, r.cell, entry.icon) end
+        if entry then setIcon(view, r.cell, entry.iconPath) end
         data.rows[#data.rows + 1] = r
     end
 
@@ -1243,8 +1251,10 @@ function U.mount(panel)
     if Dock.present() then
         -- RSE-Dock draws the button: an icon in its bar on the armour panel.
         view.dock = true
-        local icon = C.iconOf(C.load(C.find('Body', 'ITEM_Armour_T3_Body_Bronze')))
-        local iconPath = icon and (icon:GetFullName():match('^%S+%s+(.+)$')) or nil
+        -- A texture path (a string): the dock loads it itself. Never ask a
+        -- cached texture for its name here: it can have been unloaded since
+        -- (the crash of 2026-09-30, dumps 15:57 to 18:30).
+        local iconPath = C.iconPathOf(C.load(C.find('Body', 'ITEM_Armour_T3_Body_Bronze')))
         Dock.register(DOCK_ID, { order = 10, label = t('wardrobe'), desc = t('dockDesc'), icon = iconPath, window = 'own' })
     else
         -- Without RSE-Dock: the Transmog button. It is parented to the armour
