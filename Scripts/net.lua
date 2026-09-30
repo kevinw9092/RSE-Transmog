@@ -291,4 +291,11 @@ function N.describe(out)
     if count > 0 then out(string.format('relaying for %d player(s)', count)) end
 end
 
+-- Map loads: forget the controllers of the old world (a new hello is sent to
+-- the next world's server once its controller is found).
+function N.forget()
+    client.pc, client.pcName = nil, nil
+    server.players = {}
+end
+
 return N

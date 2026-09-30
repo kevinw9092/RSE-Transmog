@@ -2,7 +2,7 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.2.0'
+local VERSION = '1.2.1'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
@@ -44,8 +44,29 @@ end
 -- A single long-lived callback is used on purpose: creating a new
 -- ExecuteInGameThread callback every few milliseconds corrupts the callback
 -- registry of some UE4SS builds and eventually crashes the game.
+-- Map loads: forget every game object held and stay idle until the new world
+-- has settled. Calling into the old world's characters or widgets while they
+-- are torn down crashes the game natively (a pcall cannot catch it); two
+-- crashes on leave-and-rejoin (2026-09-30) happened ~2 s into a world load.
+local SETTLE = 3
+local idleUntil = 0
+local function forgetWorld(pause)
+    for _, f in ipairs({ V.forget, U.forget, N.forget }) do pcall(f) end
+    idleUntil = os.clock() + pause
+    U.idle = true
+end
+pcall(RegisterLoadMapPreHook, function() forgetWorld(60) end)
+pcall(RegisterLoadMapPostHook, function() forgetWorld(SETTLE) end)
+
 local frame = 0
 local function step()
+    if idleUntil > 0 then
+        if os.clock() < idleUntil then return end
+        idleUntil = 0
+        U.idle = false
+        local okFlush, flushError = pcall(U.flush)
+        if not okFlush then log('UI: ' .. tostring(flushError)) end
+    end
     frame = frame + 1
     if frame % 2 == 0 then
         local okVisual, visualError = pcall(V.tick)

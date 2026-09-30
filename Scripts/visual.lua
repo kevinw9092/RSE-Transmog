@@ -524,4 +524,13 @@ function V.describe(out)
     out('other players dressed: ' .. others)
 end
 
+-- Map loads: drops every character and preview this module holds, without
+-- touching them (they belong to the world being torn down; calling into them
+-- crashes the game natively). Characters are found again after the load.
+function V.forget()
+    chars, byEquipment = {}, {}
+    cachedPC, lastScan = nil, -math.huge
+    previewSig, previews = {}, nil
+end
+
 return V

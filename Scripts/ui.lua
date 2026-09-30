@@ -1337,6 +1337,28 @@ local function nativeAllowed()
     return true
 end
 
+-- Map loads: drops every view and the cached inventory slot (slot art source)
+-- without touching them, and holds panels made during the load until it has
+-- settled (U.flush). Calling into the old world's widgets while they are torn
+-- down crashes the game natively; that happened on leave-and-rejoin.
+U.idle = false
+local pending = {}
+function U.forget()
+    for _, view in pairs(U.views) do
+        if view.native and view.menuOpen then pcall(os.remove, S.file(UI_LOCK)) end
+    end
+    U.views, U.actions = {}, {}
+    slotSource, slotSearched = nil, -math.huge
+end
+function U.flush()
+    local list = pending
+    pending = {}
+    for _, panel in ipairs(list) do
+        local ok, err = pcall(U.mount, panel)
+        if not ok then log('mount: ' .. tostring(err)) end
+    end
+end
+
 function U.start()
     U.native = nativeAllowed()
     RegisterHook('/Script/Dominion.InventoryMainPanel:HandleToggle', function(ctx)
@@ -1353,6 +1375,7 @@ function U.start()
     NotifyOnNewObject('/Script/Dominion.InventoryMainPanel', function(panel)
         ExecuteWithDelay(500, function()
             ExecuteInGameThread(function()
+                if U.idle then pending[#pending + 1] = panel return end
                 local ok, err = pcall(U.mount, panel)
                 if not ok then log('mount: ' .. tostring(err)) end
             end)

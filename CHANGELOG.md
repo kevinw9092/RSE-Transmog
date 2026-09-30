@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1
+- Fixed a crash when leaving and rejoining a world. While the new world loaded, the mod kept calling into characters and inventory widgets from the old one, and attached to the new inventory panel before the load had settled. It now forgets all of them when a map starts loading (characters, inventory views, the cached inventory slot used for slot art, and multiplayer controllers). It pauses until 3 s after the load finishes, then attaches to any inventory panel made during the load.
+
 ## 1.2.0
 - **Game-style slots.** The look and tab squares now use the inventory's own slot art, copied from a live inventory slot, instead of flat grey boxes with a light outline. Hover and selection still show the tan fill and gold outline. The game's hover sparkle is not reproduced. If the slot art cannot be found, the squares stay flat dark.
 - **Same spacing as RSE-Toolbag.** The window content now starts at the frame's inner edge, as in the Toolbag window, which leaves more room for the grid. Rows are 6 apart and cells 4 apart in both windows.
