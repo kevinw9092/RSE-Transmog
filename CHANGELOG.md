@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.2
+- Fixed the same crash risk as RSE-Dock 1.2.1. An inventory panel queued during a map load could belong to the previous world (the main menu). Each load now empties the queue and drops panels made before it started.
+
 ## 1.2.1
 - Fixed a crash when leaving and rejoining a world. While the new world loaded, the mod kept calling into characters and inventory widgets from the old one, and attached to the new inventory panel before the load had settled. It now forgets all of them when a map starts loading (characters, inventory views, the cached inventory slot used for slot art, and multiplayer controllers). It pauses until 3 s after the load finishes, then attaches to any inventory panel made during the load.
 

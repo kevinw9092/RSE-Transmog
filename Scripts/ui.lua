@@ -1343,6 +1343,13 @@ end
 -- down crashes the game natively; that happened on leave-and-rejoin.
 U.idle = false
 local pending = {}
+-- Each map load start is a new generation: panels made before it belong to a
+-- world being destroyed and are dropped unread (touching one crashed RSE-Dock).
+local generation = 0
+function U.newWorld()
+    generation = generation + 1
+    pending = {}
+end
 function U.forget()
     for _, view in pairs(U.views) do
         if view.native and view.menuOpen then pcall(os.remove, S.file(UI_LOCK)) end
@@ -1373,8 +1380,10 @@ function U.start()
         end
     end)
     NotifyOnNewObject('/Script/Dominion.InventoryMainPanel', function(panel)
+        local born = generation
         ExecuteWithDelay(500, function()
             ExecuteInGameThread(function()
+                if born ~= generation then return end -- made before a map load started
                 if U.idle then pending[#pending + 1] = panel return end
                 local ok, err = pcall(U.mount, panel)
                 if not ok then log('mount: ' .. tostring(err)) end

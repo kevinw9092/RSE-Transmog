@@ -2,7 +2,7 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.2.1'
+local VERSION = '1.2.2'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
@@ -55,7 +55,10 @@ local function forgetWorld(pause)
     idleUntil = os.clock() + pause
     U.idle = true
 end
-pcall(RegisterLoadMapPreHook, function() forgetWorld(60) end)
+pcall(RegisterLoadMapPreHook, function()
+    pcall(U.newWorld)
+    forgetWorld(60)
+end)
 pcall(RegisterLoadMapPostHook, function() forgetWorld(SETTLE) end)
 
 local frame = 0
