@@ -16,6 +16,9 @@ local C = require('catalog')
 local V = require('visual')
 local S = require('store')
 local Cfg = require('config')
+local Dock = require('rse_dock')
+-- Id of this mod's icon in RSE-Dock's bar (RSEDock.active holds it while open).
+local DOCK_ID = 'transmog'
 local t = I.t
 
 local U = { views = {}, actions = {}, slot = 'Body' }
@@ -32,6 +35,14 @@ local TAB_ICON = {
 }
 local NATIVE_COLUMNS = 4
 local CELL_HEIGHT, CELL_ICON, TAB_SIZE = 104, 76, 50
+-- Window spacing, shared with RSE-Toolbag's ui.lua (keep both in sync). The
+-- content sits at the inventory frame's own inset times FRAME_INSET (RSE-Dock
+-- uses the same factor for its shared window), plus CONTENT_PAD.
+local FRAME_INSET = 0.9
+local CONTENT_PAD = 0 -- window inset to the content
+local ROW_GAP = 6     -- between rows: title/Close, search, grid, footer; and tabs to grid
+local CELL_PAD = 2    -- grid slot padding: cells are 2 * CELL_PAD apart
+local BUTTON_W, BUTTON_H, TITLE_SIZE = 90, 34, 15 -- Close and footer buttons, title text
 -- While the native wardrobe is open this file exists. If the game closes with
 -- it still there, the next launch uses the classic look instead.
 local UI_LOCK = 'ui-native.lock'
@@ -57,12 +68,13 @@ local COLOR = {
     text     = { R = 0.88, G = 0.85, B = 0.78, A = 1 },
     dim      = { R = 0.58, G = 0.55, B = 0.50, A = 1 },
     locked   = { R = 0.48, G = 0.45, B = 0.41, A = 1 },
-    -- Square slots, after the inventory's slots
+    -- Square slots: the game's slot art underneath (see copySlotArt); `slot`
+    -- only if that cannot be copied. Hover and selection are drawn over it.
     slot         = { R = 0.040, G = 0.036, B = 0.031, A = 0.92 },
-    slotHover    = { R = 0.085, G = 0.072, B = 0.052, A = 0.95 },
+    slotHover    = { R = 0.150, G = 0.120, B = 0.075, A = 0.45 },
     slotSelected = { R = 0.190, G = 0.145, B = 0.070, A = 0.95 },
-    slotEdge     = { R = 0.150, G = 0.132, B = 0.105, A = 1 },
     hoverEdge    = { R = 0.520, G = 0.420, B = 0.240, A = 1 },
+    clear        = { R = 0, G = 0, B = 0, A = 0 },
 }
 -- Inventory grid area relative to the armour panel, measured on CL-240163.
 -- Used only if the live layout cannot be read.
@@ -272,8 +284,8 @@ end
 local function paint(c)
     if not c.bg then return end
     if c.square then
-        local edge = c.selected and COLOR.gold or (c.hovered and COLOR.hoverEdge or COLOR.slotEdge)
-        local fill = c.selected and COLOR.slotSelected or (c.hovered and COLOR.slotHover or COLOR.slot)
+        local edge = c.selected and COLOR.gold or (c.hovered and COLOR.hoverEdge or COLOR.clear)
+        local fill = c.selected and COLOR.slotSelected or (c.hovered and COLOR.slotHover or COLOR.clear)
         if c.paintedEdge ~= edge then c.paintedEdge = edge; c.edge:SetBrushColor(edge) end
         if c.paintedBg ~= fill then c.paintedBg = fill; c.bg:SetBrushColor(fill) end
         return
@@ -337,11 +349,82 @@ local function newCell(view, parent, opts)
     return c
 end
 
--- Square icon cell in the inventory's style: dark slot, icon centred, gold
--- outline when selected, lighter outline on hover. Plain UMG plus the same
--- invisible game button as the classic cells (input, gamepad, click sound).
--- Game widgets with their own C++ logic (crafting slots and tabs) are not
--- used here: they expect recipe and crafting data behind them.
+-- The game's inventory slot art, for the square cells: the idle brush of a
+-- live inventory slot (WBP_Inventory_ItemSlot_C, a CommonUI button that draws
+-- its background from its button style). Tried in order: the style's
+-- NormalBase, the brush the slot draws now (NormalStyle.Normal), its
+-- CommonSlotBackground texture or material. Only brush data is copied (a
+-- struct holding the texture or material); the slot widget itself, with its
+-- hover particles (NS_InventoryHighlight), is never created.
+local SLOT_CLASS = 'WBP_Inventory_ItemSlot_C'
+local slotSource, slotSearched, slotArtLogged = nil, -math.huge, false
+
+local function paintable(brush)
+    return get(function()
+        if brush.DrawAs == 0 or not valid(brush.ResourceObject) then return false end -- 0 = no draw
+        return brush.TintColor.ColorUseRule ~= 0 or brush.TintColor.SpecifiedColor.A > 0.01
+    end) == true
+end
+
+-- A live inventory slot, searched again (at most every 2 s) once it is gone.
+local function findSlotSource()
+    if valid(slotSource) then return slotSource end
+    if os.clock() - slotSearched < 2 then return nil end
+    slotSearched, slotSource = os.clock(), nil
+    for _, s in ipairs(get(function() return FindAllOf(SLOT_CLASS) end) or {}) do
+        if valid(s) and not name(s):find('Default__', 1, true) then slotSource = s break end
+    end
+    return slotSource
+end
+
+-- Copies the slot art onto `image`; returns what was copied, or nil.
+local function copySlotArt(image)
+    local s = findSlotSource()
+    if not s then return nil end
+    local style = get(function() return s:GetStyle() end)
+    for _, source in ipairs({
+        { 'style NormalBase', function() return style.NormalBase end },
+        { 'NormalStyle.Normal', function() return s.NormalStyle.Normal end },
+    }) do
+        local brush = get(source[2])
+        if brush and paintable(brush) and pcall(function() image:SetBrush(brush) end)
+            and valid(get(function() return image.Brush.ResourceObject end)) then
+            return source[1]
+        end
+    end
+    local resource = get(function() return s.CommonSlotBackground end)
+    if valid(resource) then
+        if get(function() return resource:IsA('/Script/Engine.Texture2D') end)
+            and pcall(function() image:SetBrushFromTexture(resource, false) end) then
+            return 'CommonSlotBackground'
+        elseif get(function() return resource:IsA('/Script/Engine.MaterialInterface') end)
+            and pcall(function() image:SetBrushFromMaterial(resource) end) then
+            return 'CommonSlotBackground'
+        end
+    end
+    return nil
+end
+
+-- Gives a square cell the slot art once it can be found (flat `slot` till then).
+local function slotArt(c)
+    if c.artCopied or not valid(c.art) then return end
+    local copied = copySlotArt(c.art)
+    if copied then
+        pcall(function() c.art:SetColorAndOpacity({ R = 1, G = 1, B = 1, A = 1 }) end)
+        c.artCopied = true
+        if not slotArtLogged then
+            slotArtLogged = true
+            log('slot art copied from ' .. name(slotSource) .. ' (' .. copied .. ')')
+        end
+    end
+end
+
+-- Square icon cell in the inventory's style: the game's slot art, icon
+-- centred, gold fill and outline when selected, lighter on hover. Plain UMG
+-- plus the same invisible game button as the classic cells (input, gamepad,
+-- click sound). Game widgets with their own C++ logic (inventory and crafting
+-- slots and tabs) are not used here: they expect item and recipe data behind
+-- them.
 local function squareCell(view, parent, opts)
     -- opts: width (nil = fill the grid column), height, icon (icon box size), action, note
     local sizeBox = widget('SizeBox', view.tree)
@@ -352,11 +435,16 @@ local function squareCell(view, parent, opts)
     sizeBox:SetContent(overlay)
 
     -- Decoration never takes the mouse; only the invisible button on top does.
+    local art = widget('Image', view.tree)
+    pcall(function() art:SetColorAndOpacity(COLOR.slot) end)
+    art:SetVisibility(HIT_TEST_INVISIBLE)
+    align(overlay:AddChildToOverlay(art), H_FILL, V_FILL)
+    -- Hover and selection: outline and fill over the art, clear when idle.
     local edge = widget('Border', view.tree)
-    edge:SetBrushColor(COLOR.slotEdge)
+    edge:SetBrushColor(COLOR.clear)
     edge:SetPadding({ Left = 2, Top = 2, Right = 2, Bottom = 2 })
     local bg = widget('Border', view.tree)
-    bg:SetBrushColor(COLOR.slot)
+    bg:SetBrushColor(COLOR.clear)
     pcall(function() bg:SetHorizontalAlignment(H_CENTER) end)
     pcall(function() bg:SetVerticalAlignment(V_CENTER) end)
     edge:SetContent(bg)
@@ -368,7 +456,8 @@ local function squareCell(view, parent, opts)
     iconBox:SetHeightOverride(opts.icon)
     bg:SetContent(iconBox)
 
-    local c = { square = true, sizeBox = sizeBox, edge = edge, bg = bg, iconArea = iconBox }
+    local c = { square = true, sizeBox = sizeBox, art = art, edge = edge, bg = bg, iconArea = iconBox }
+    slotArt(c)
     if opts.note then
         local label = newText(view, 10, COLOR.text, 'medium')
         setText(label, opts.note)
@@ -601,7 +690,7 @@ end
 
 local function buildSlot(view, slot, hideable)
     local grid = widget('UniformGridPanel', view.tree)
-    pcall(function() grid:SetSlotPadding({ Left = 2, Top = 2, Right = 2, Bottom = 2 }) end)
+    pcall(function() grid:SetSlotPadding({ Left = CELL_PAD, Top = CELL_PAD, Right = CELL_PAD, Bottom = CELL_PAD }) end)
     local gridSlot = add(view.list, grid)
     align(gridSlot, H_FILL, nil)
     local data = { grid = grid, rows = {} }
@@ -652,8 +741,17 @@ local function setMenu(view, open)
         end
     end
     view.menu:SetVisibility(open and VISIBLE or COLLAPSED)
-    setButtonLabel(view.toggle, (open and not view.native) and t('back') or t('wardrobe'))
+    if view.dock then
+        -- One window at a time: RSE-Dock closes the others when this one opens.
+        if open then Dock.open(DOCK_ID) else Dock.close(DOCK_ID) end
+    elseif valid(view.toggle) then
+        setButtonLabel(view.toggle, (open and not view.native) and t('back') or t('wardrobe'))
+    end
     if open then
+        -- Cells built before any inventory slot existed get the slot art now.
+        for _, c in ipairs(view.cells) do
+            if c.square then slotArt(c) end
+        end
         local ok, err = pcall(U.showSlot, view, U.slot)
         if not ok then log('open: ' .. tostring(err)) end
     end
@@ -745,6 +843,7 @@ local function placeMenu(panel, armour, fallbackCanvas, menu)
     end)
     if ok then return end
     log('menu placement fallback: ' .. tostring(err))
+    assert(valid(fallbackCanvas), 'no place for the transmog window')
     local slot = fallbackCanvas:AddChildToCanvas(menu)
     slot:SetOffsets(FALLBACK_MENU)
     slot:SetZOrder(21)
@@ -878,31 +977,31 @@ local function buildNative(view, tree)
     local tabs = widget('VerticalBox', tree)
     local tabsSlot = add(body, tabs)
     align(tabsSlot, nil, 1) -- top
-    pad(tabsSlot, 11, 11, 0, 11)
+    pad(tabsSlot, CONTENT_PAD, CONTENT_PAD, 0, CONTENT_PAD)
     for i, slot in ipairs(TABS) do
         local tab = nativeTab(view, tabs, function() U.showSlot(view, slot) end)
-        pad(tab.slot, 0, i == 1 and 0 or 5, 0, 0)
+        pad(tab.slot, 0, i == 1 and 0 or 2 * CELL_PAD, 0, 0)
         view.tabs[slot] = tab
     end
 
     local right = widget('VerticalBox', tree)
     local rightSlot = add(body, right)
     size(rightSlot, FILL)
-    pad(rightSlot, 11, 9, 11, 9)
+    pad(rightSlot, ROW_GAP, CONTENT_PAD, CONTENT_PAD, CONTENT_PAD)
 
     -- Header: WARDROBE - SLOT + close
     local header = widget('HorizontalBox', tree)
     add(right, header)
-    view.title = newText(view, 15, COLOR.gold, 'medium')
+    view.title = newText(view, TITLE_SIZE, COLOR.gold, 'medium')
     view.titleCache = {}
     local titleSlot = add(header, view.title)
     size(titleSlot, FILL)
     align(titleSlot, nil, V_CENTER)
-    local close = buttonCell(view, header, t('close'), function() setMenu(view, false) end, 90, 34)
+    local close = buttonCell(view, header, t('close'), function() setMenu(view, false) end, BUTTON_W, BUTTON_H)
     align(close.slot, nil, V_CENTER)
 
     local tools = widget('HorizontalBox', tree)
-    pad(add(right, tools), 0, 7, 0, 7)
+    pad(add(right, tools), 0, ROW_GAP, 0, ROW_GAP)
     local search, searchSlot = buildSearch(view, tools)
     size(searchSlot, FILL)
     align(searchSlot, nil, V_CENTER)
@@ -917,7 +1016,7 @@ local function buildNative(view, tree)
 
     -- Name of the hovered (or current) look, and the count
     local info = widget('HorizontalBox', tree)
-    pad(add(right, info), 2, 5, 2, 0)
+    pad(add(right, info), 2, ROW_GAP, 2, 0)
     view.details = newText(view, 15, COLOR.gold, 'medium')
     view.detailsCache = {}
     local detailsSlot = add(info, view.details)
@@ -929,18 +1028,18 @@ local function buildNative(view, tree)
     -- Footer: what is worn and shown (two short lines), then the resets
     -- What is worn and shown, on its own row across the full width
     local statusRow = widget('HorizontalBox', tree)
-    pad(add(right, statusRow), 2, 5, 2, 0)
+    pad(add(right, statusRow), 2, ROW_GAP, 2, 0)
     pcall(function() statusRow:SetClipping(1) end)
     view.status = newText(view, 11, COLOR.dim)
     size(add(statusRow, view.status), FILL)
 
     -- Buttons, right-aligned
     local footer = widget('HorizontalBox', tree)
-    pad(add(right, footer), 0, 7, 0, 0)
+    pad(add(right, footer), 0, ROW_GAP, 0, 0)
     size(add(footer, widget('Spacer', tree)), FILL)
-    local resetSlot = buttonCell(view, footer, t('resetSlot'), function() if view.key then choose(view, view.key, 'original') end end, 90, 34)
+    local resetSlot = buttonCell(view, footer, t('resetSlot'), function() if view.key then choose(view, view.key, 'original') end end, BUTTON_W, BUTTON_H)
     align(resetSlot.slot, nil, V_CENTER)
-    view.resetAll = buttonCell(view, footer, t('resetAll'), resetAllAction(view), 90, 34, { t('resetAll'), t('confirmShort') })
+    view.resetAll = buttonCell(view, footer, t('resetAll'), resetAllAction(view), BUTTON_W, BUTTON_H, { t('resetAll'), t('confirmShort') })
     pad(view.resetAll.slot, 6, 0, 0, 0)
     align(view.resetAll.slot, nil, V_CENTER)
     return body
@@ -1022,7 +1121,8 @@ end
 function U.mount(panel)
     if not valid(panel) then return end
     local key = name(panel)
-    if U.views[key] and valid(U.views[key].toggle) then return end
+    local old = U.views[key]
+    if old and (valid(old.toggle) or (old.dock and valid(old.menu))) then return end
     local tree = panel.WidgetTree
     local armour = panel.BackgroundPanelArmour
     assert(valid(armour), 'Armour panel unavailable')
@@ -1036,15 +1136,25 @@ function U.mount(panel)
     }
     U.views[key] = view
 
-    -- The toggle is parented to the armour panel so it follows its open/close animation.
-    local canvas = widget('CanvasPanel', armour.WidgetTree, 'Toggle')
-    overlay:AddChildToOverlay(canvas)
-    local toggleBox = widget('VerticalBox', tree)
-    local toggleSlot = canvas:AddChildToCanvas(toggleBox)
-    toggleSlot:SetOffsets({ Left = 389, Top = 14, Right = 200, Bottom = 42 })
-    toggleSlot:SetZOrder(20)
-    view.toggleBox = toggleBox
-    view.toggle = gameButton(view, toggleBox, t('wardrobe'), function() setMenu(view, not view.menuOpen) end, 200, 42)
+    local canvas
+    if Dock.present() then
+        -- RSE-Dock draws the button: an icon in its bar on the armour panel.
+        view.dock = true
+        local icon = C.iconOf(C.load(C.find('Body', 'ITEM_Armour_T3_Body_Bronze')))
+        local iconPath = icon and (icon:GetFullName():match('^%S+%s+(.+)$')) or nil
+        Dock.register(DOCK_ID, { order = 10, label = t('wardrobe'), desc = t('dockDesc'), icon = iconPath, window = 'own' })
+    else
+        -- Without RSE-Dock: the Transmog button. It is parented to the armour
+        -- panel so it follows its open/close animation.
+        canvas = widget('CanvasPanel', armour.WidgetTree, 'Toggle')
+        overlay:AddChildToOverlay(canvas)
+        local toggleBox = widget('VerticalBox', tree)
+        local toggleSlot = canvas:AddChildToCanvas(toggleBox)
+        toggleSlot:SetOffsets({ Left = 389, Top = 14, Right = 200, Bottom = 42 })
+        toggleSlot:SetZOrder(20)
+        view.toggleBox = toggleBox
+        view.toggle = gameButton(view, toggleBox, t('wardrobe'), function() setMenu(view, not view.menuOpen) end, 200, 42)
+    end
 
     local frame
     if U.native then
@@ -1069,10 +1179,10 @@ function U.mount(panel)
             local bodySlot = window:AddChildToOverlay(body)
             align(bodySlot, H_FILL, V_FILL)
             if host.padding then
-                -- 10% less than the inventory's own inset: a little more room.
+                -- The inventory's own inset times FRAME_INSET, as RSE-Dock's window.
                 local p = host.padding
-                pcall(function() bodySlot:SetPadding({ Left = p.Left * 0.9, Top = p.Top * 0.9,
-                    Right = p.Right * 0.9, Bottom = p.Bottom * 0.9 }) end)
+                pcall(function() bodySlot:SetPadding({ Left = p.Left * FRAME_INSET, Top = p.Top * FRAME_INSET,
+                    Right = p.Right * FRAME_INSET, Bottom = p.Bottom * FRAME_INSET }) end)
             end
             placeWindow(panel, armour, window)
             return window
@@ -1092,7 +1202,7 @@ function U.mount(panel)
     view.menu = frame
     frame:SetVisibility(COLLAPSED)
     view.menuOpen = false
-    log('mounted on ' .. key)
+    log('mounted on ' .. key .. (view.dock and ' (RSE-Dock icon)' or ''))
 end
 
 -- -------------------------------------------------------------------- tick
@@ -1116,18 +1226,23 @@ end
 
 function U.tick()
     for key, view in pairs(U.views) do
-        if not valid(view.panel) or not valid(view.toggleBox) then
+        if not valid(view.panel) or not ((view.dock and valid(view.menu)) or valid(view.toggleBox)) then
             forget(key)
         else
             local open = inventoryOpen(view)
             if open ~= view.inventoryOpen then
                 view.inventoryOpen = open
-                view.toggleBox:SetVisibility(open and VISIBLE or COLLAPSED)
+                if valid(view.toggleBox) then view.toggleBox:SetVisibility(open and VISIBLE or COLLAPSED) end
                 if not open and view.menuOpen then setMenu(view, false) end
                 if open then
                     V.syncPreview(true)
                     U.recenter(view, 2) -- the toggle is drawn again: re-centre after its setup
                 end
+            end
+            if view.dock then
+                -- The dock icon (or another dock window opening) drives this window.
+                local want = open and Dock.isOpen(DOCK_ID)
+                if want ~= view.menuOpen then setMenu(view, want) end
             end
             if open then
                 V.syncPreview()

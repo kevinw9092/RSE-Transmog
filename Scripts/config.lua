@@ -1,8 +1,5 @@
 -- RSE-Transmog user settings. Edit with any text editor, then restart the game.
 return {
-    -- "auto" follows the game language. Supported: "en", "tr".
-    Language = "auto",
-
     -- "native": the wardrobe opens as its own window beside the inventory,
     --           in the inventory's frame art, with icon slots and icon tabs.
     -- "classic": the original compact list with names, over the inventory grid.

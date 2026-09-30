@@ -19,7 +19,7 @@ This is a visual-only transmog for **RuneScape: Dragonwilds**, built on UE4SS.
 - The look survives gear swaps, loading, respawning and co-op sync.
 - Choices are saved **per character**.
 - Stats, armour values, damage, hit detection, inventory and your save files are never changed.
-- English and Turkish interface.
+- English interface. Item names are shown in your game language.
 
 ## Requirements
 - [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) for RuneScape: Dragonwilds. Use a recent **experimental** build. The mod was tested with `v3.0.1-1140` and `v3.0.1 Beta (f6d5f942)`.
@@ -45,7 +45,6 @@ Open `Scripts\config.lua` in a text editor:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `Language` | `"auto"` | `"en"` or `"tr"` to force a language |
 | `UIStyle` | `"native"` | `"native"`: its own window beside the inventory, in the inventory's frame art. `"classic"`: the compact list with names, over the inventory grid. If the game closes while the native window is open, the next launch uses the classic look once and says so in the log. |
 | `Multiplayer` | `true` | Share your looks with other mod users and see theirs |
 | `ShowOthers` | `true` | `false` always shows other players' real gear |
@@ -68,7 +67,7 @@ The host or server checks every message: known slots, well-formed ids, and lengt
 Items that need an entitlement (for example Early Adopter, Community, Gilded or Deluxe items) are only listed if your character has worn them. The mod never unlocks paid content.
 
 ## FAQ
-**The button is missing.** Make sure UE4SS loads: `ue4ss\UE4SS.log` should contain `[RSE-Transmog] v1.1.0 loaded`.
+**The button is missing.** Make sure UE4SS loads: `ue4ss\UE4SS.log` should contain `[RSE-Transmog] v1.2.0 loaded`.
 
 **A slot says "Nothing equipped here".** The transmog changes the look of an equipped item. Equip any item in that slot and your saved choice applies automatically.
 
@@ -106,7 +105,7 @@ RSE-Transmog is based on [Dragonwilds Wardrobe](https://www.nexusmods.com/runesc
   - `config.lua`: user settings.
 
 ### QA checklist
-1. After launch, the log shows `v1.1.0 loaded` and no `UI:`/`visual:`/`net:` errors.
+1. After launch, the log shows `v1.2.0 loaded` and no `UI:`/`visual:`/`net:` errors.
 2. Opening the inventory shows the button. Closing it hides the button and the panel. The panel covers the inventory grid exactly at 1080p, 1440p and ultrawide.
 3. Native look: the game's panel frame, icon tabs that follow the equipped item's icon, and a grid of crafting-style icon slots. Hover shows the look's name below the grid. The worn look is shown selected, and Original and Hide carry a label. No recipe tooltip appears on hover. Classic look (`UIStyle = "classic"`): icons and names in two columns with a gold highlight. In both looks, search filters the list and the count updates.
 4. Clicking a look changes both the world model and the inventory preview. Character stats and armour values stay the same.

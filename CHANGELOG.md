@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+- **Game-style slots.** The look and tab squares now use the inventory's own slot art, copied from a live inventory slot, instead of flat grey boxes with a light outline. Hover and selection still show the tan fill and gold outline. The game's hover sparkle is not reproduced. If the slot art cannot be found, the squares stay flat dark.
+- **Same spacing as RSE-Toolbag.** The window content now starts at the frame's inner edge, as in the Toolbag window, which leaves more room for the grid. Rows are 6 apart and cells 4 apart in both windows.
+- **English only.** The Turkish interface text and the `Language` setting were removed. Item names still follow the game language. An old `config.lua` with a `Language` line keeps working; the line is ignored.
+- **RSE-Dock support.** With RSE-Dock installed, the Transmog button becomes an icon in the dock's bar on the armour panel, next to other RSE mods' icons. Only one RSE window is open at a time. Without RSE-Dock, the Transmog button works as before.
+
 ## 1.1.0
 - **Renamed to RSE-Transmog**, the first mod of the RSE (RuneScape Enhanced) family. The mod folder is now `ue4ss\Mods\RSE-Transmog\`: move your `saves\` folder over from `DragonwildsWardrobe\` to keep your choices, and remove the old folder. Console commands are now `transmog_status` and `transmog_dumpui`, and the inventory button reads **Transmog**.
 - **Weapon and shield looks.** New Weapon and Off-hand tabs cover about 150 looks: swords, scimitars, maces, daggers, greatswords, great axes, mauls, staves, wands, bows, crossbows and shields. Each weapon type keeps its own look, and weapons can be hidden. The real weapon keeps working exactly as before: its meshes only stop drawing, and a local copy of the chosen weapon is drawn in their place.
