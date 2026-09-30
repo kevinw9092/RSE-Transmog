@@ -3,20 +3,60 @@
   "id": "RSE-Transmog",
   "name": "RSE-Transmog",
   "author": "ColonelCousland, RSE contributors",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Visual-only transmog: pick the look of your head, body, legs, cape and weapons from the appearances your character knows. Opens from the inventory (the RSE-Dock icon, or the Transmog button).",
-  "config": { "file": "Scripts/config.lua", "format": "lua" },
+  "config": {
+    "file": "Scripts/config.lua",
+    "format": "lua"
+  },
   "settings": [
-    { "type": "header", "label": "Window" },
-    { "key": "UIStyle", "type": "choice", "label": "Window style", "options": ["native", "classic"], "default": "native", "restart": true,
-      "tooltip": "native: its own window beside the inventory, in the inventory's frame art, with icon slots and tabs. classic: the original compact list with names, over the inventory grid." },
-    { "type": "header", "label": "Multiplayer" },
-    { "key": "Multiplayer", "type": "toggle", "label": "Share looks with other players", "default": true, "restart": true,
-      "tooltip": "Share your looks with other players who run the mod, and see theirs. Needs the mod on the host or dedicated server too; otherwise looks stay client-side." },
-    { "key": "ShowOthers", "type": "toggle", "label": "Show other players' looks", "default": true, "restart": true,
-      "tooltip": "Off: always show other players' real gear, even if they share a look." },
-    { "type": "header", "label": "Other" },
-    { "key": "Debug", "type": "toggle", "label": "Debug log", "default": false, "restart": false,
-      "tooltip": "Extra lines in ue4ss\\UE4SS.log (useful for bug reports). Applies at once." }
+    {
+      "type": "header",
+      "label": "Window"
+    },
+    {
+      "key": "UIStyle",
+      "type": "choice",
+      "label": "Window style",
+      "options": [
+        "native",
+        "classic"
+      ],
+      "default": "native",
+      "restart": true,
+      "tooltip": "native: its own window beside the inventory, in the inventory's frame art, with icon slots and tabs. classic: the original compact list with names, over the inventory grid."
+    },
+    {
+      "type": "header",
+      "label": "Multiplayer"
+    },
+    {
+      "key": "Multiplayer",
+      "type": "toggle",
+      "label": "Share looks with other players",
+      "default": true,
+      "restart": true,
+      "tooltip": "Share your looks with other players who run the mod, and see theirs. Needs the mod on the host or dedicated server too; otherwise looks stay client-side."
+    },
+    {
+      "key": "ShowOthers",
+      "type": "toggle",
+      "label": "Show other players' looks",
+      "default": true,
+      "restart": true,
+      "tooltip": "Off: always show other players' real gear, even if they share a look."
+    },
+    {
+      "type": "header",
+      "label": "Other"
+    },
+    {
+      "key": "Debug",
+      "type": "toggle",
+      "label": "Debug log",
+      "default": false,
+      "restart": false,
+      "tooltip": "Extra lines in ue4ss\\UE4SS.log (useful for bug reports). Applies at once."
+    }
   ]
 }

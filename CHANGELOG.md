@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.4
+- The look cells now look like the inventory's empty slots: a slightly darker square over the window's own grain, with no framed slot art. The game's empty slots draw no texture of their own; every slot brush is empty, as `transmog_slotart` showed. The tab column keeps its slot art.
+
 ## 1.2.3
 - **Grid slots match the inventory's empty slots.** The look cells now copy what an empty inventory slot draws (plain dark with a faint grain) instead of the item slot frame. The tab column keeps the item slot frame. If no empty inventory slot is found (full bag), the cells fall back to the frame, then to flat dark.
 - **RSE-ModMenu support.** New `modmenu.json`: Window style, Share looks, Show other players' looks and Debug log can be changed in game (Esc > MODS). Debug applies at once; the others after a restart. The settings stay in `Scripts\config.lua`.

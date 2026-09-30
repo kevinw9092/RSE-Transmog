@@ -2,7 +2,7 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.2.3'
+local VERSION = '1.2.4'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
