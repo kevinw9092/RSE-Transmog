@@ -2,7 +2,7 @@
 -- Based on Dragonwilds Wardrobe by ColonelCousland (MIT).
 -- The same folder runs on clients, listen hosts and dedicated servers; on a
 -- server without a local player only the multiplayer relay (net.lua) works.
-local VERSION = '1.3.0'
+local VERSION = '1.3.1'
 local V = require('visual')
 local U = require('ui')
 local N = require('net')
@@ -68,11 +68,43 @@ end
 local SETTLE = 3
 local SETTLE_TICKS = 10
 local idleUntil, idleTicks = 0, 0
+-- Dedicated server: nil until known (checked once the world has settled, and
+-- again after every map load). If the check fails the machine counts as a client.
+local dedicated, nextServerCheck = nil, 0
 local function forgetWorld(pause)
     for _, f in ipairs({ V.forget, U.forget, N.forget, C.forget, Hd.forgetCaches }) do pcall(f) end
     idleUntil = os.clock() + pause
     idleTicks = SETTLE_TICKS
     U.idle = true
+    dedicated, nextServerCheck = nil, 0
+end
+
+-- A dedicated server has no local player: the character, the wardrobe and
+-- the hover poll have nothing to do there, and looking for a local
+-- controller would rescan every PlayerController forever.
+local toldServer = false
+local function detectServer()
+    local now = os.clock()
+    if now < nextServerCheck then return end
+    nextServerCheck = now + 3
+    -- A game state of the world (not the class default, which has no world:
+    -- asked with it, a server would answer "not dedicated").
+    local context = nil
+    local okFind, all = pcall(FindAllOf, 'GameStateBase')
+    for _, gs in ipairs(okFind and type(all) == 'table' and all or {}) do
+        local okValid, isValid = pcall(function() return gs:IsValid() end)
+        local okName, name = pcall(function() return gs:GetFName():ToString() end)
+        if okValid and isValid == true and okName and not tostring(name):find('^Default__') then context = gs break end
+    end
+    if not context then return end -- no world yet: a client for now
+    local ok, result = pcall(function()
+        return StaticFindObject('/Script/Engine.Default__KismetSystemLibrary'):IsDedicatedServer(context)
+    end)
+    dedicated = ok and result == true
+    if dedicated and not toldServer then
+        toldServer = true
+        log('dedicated server: only the multiplayer relay runs')
+    end
 end
 pcall(RegisterLoadMapPreHook, function()
     pcall(U.newWorld)
@@ -105,7 +137,15 @@ local function step()
         local okFlush, flushError = pcall(U.flush)
         if not okFlush then log('UI: ' .. tostring(flushError)) end
     end
+    if dedicated == nil then detectServer() end
     frame = frame + 1
+    if dedicated then
+        if frame % 2 == 0 then
+            local okNet, netError = pcall(N.serverTick)
+            if not okNet then log('net: ' .. tostring(netError)) end
+        end
+        return
+    end
     if frame % 2 == 0 then
         local okVisual, visualError = pcall(V.tick)
         if not okVisual then log('visual: ' .. tostring(visualError)) end

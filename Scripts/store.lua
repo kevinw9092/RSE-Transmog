@@ -55,6 +55,11 @@ end
 function S.load(guid)
     local path = saveDir() .. 'wardrobe-' .. guid .. '.txt'
     local data = parse(path)
+    if not data and exists(path .. '.tmp') then
+        -- A save stopped between removing the old file and the rename: finish it.
+        data = parse(path .. '.tmp')
+        if data then pcall(os.rename, path .. '.tmp', path) end
+    end
     if not data then
         -- 0.x builds kept the file inside Scripts\.
         local legacy = scripts .. 'wardrobe-' .. guid .. '.txt'

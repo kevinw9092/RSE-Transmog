@@ -214,9 +214,10 @@ local function categoryOf(rel)
 end
 
 -- Slot key for a loaded HeldEquipmentData, or nil if it is not a weapon we dress.
-function C.heldKey(data)
+-- dataName: full(data), if the caller already has it.
+function C.heldKey(data, dataName)
     if not valid(data) then return nil end
-    local rel = full(data):match('/Equipment/Held/(.+)$')
+    local rel = (dataName or full(data)):match('/Equipment/Held/(.+)$')
     local category = rel and categoryOf(rel)
     return category and C.HELD_PREFIX .. category or nil
 end
@@ -480,6 +481,19 @@ end
 function C.forget()
     iconCache = {}
     recipes, recipesAt, indexed, noRecipe = {}, -math.huge, {}, {}
+    -- A look that failed to load once (content still streaming in) gets
+    -- another chance: entries C.prepare dropped go back into their list, and
+    -- discovery runs again for content the next world has loaded.
+    local listed = {}
+    for key in pairs(prepared) do
+        for _, entry in ipairs(C[key] or {}) do listed[entry] = true end
+    end
+    for _, entry in pairs(byId) do
+        entry.missing = nil
+        local list = prepared[entry.slot] and C[entry.slot]
+        if list and not listed[entry] then list[#list + 1] = entry end
+    end
+    prepared, discovered = {}, false
 end
 
 return C

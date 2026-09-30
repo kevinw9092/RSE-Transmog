@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.1
+- **Dedicated servers:** the server is detected once the world has settled, and then only the look relay runs. It looked for a local player every second and ran the wardrobe's ticks for nothing.
+- **Removed a crash risk:** `transmog_dumpui` no longer reads widgets' drawn size (passing it to SlateBlueprintLibrary has crashed this game). It logs the desired size only.
+- The wardrobe's hover check covers only the tab on screen, not every tab opened so far. Buttons for a tab are made with the widget library, world and owner looked up once per tab.
+- The inventory's character preview is re-applied only when the choice, the real item, the body type or the drawn mesh changed (it redid every slot every 240 ms).
+- Solo play: other players' looks are not scanned for when nobody has shared one.
+- **Saves:** a save interrupted between removing the old file and the rename is finished on the next load, instead of the looks being lost.
+- A look that failed to load once (content still streaming in) comes back after the next map load instead of staying hidden until a restart.
+- Debug text is built only with Debug on.
+
 ## 1.3.0
 - **Looks now sync on dedicated servers.** Players' games sent their looks to the server with the engine's `ServerExec` debug command. A release dedicated server drops that command before any mod sees it, so the server never heard from anyone, and nobody saw anyone else's looks. The 1.2.9 logs showed this: a joining player's `ServerAcknowledgePossession` reached the server's mods, but `ServerExec` never did. Players now send with `ServerNotifyLoadedWorld`. It's a reliable engine message that the server acts on only during a seamless map change, and only for the new map's name, which a Transmog message never is. The server still accepts the old `ServerExec` messages from players on older versions.
 - **Update both sides.** The server and every player need 1.3.0 for looks to sync.

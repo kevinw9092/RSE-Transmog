@@ -50,21 +50,16 @@ end
 local scripts = debug.getinfo(1, 'S').source:match('^@?(.*[/\\])') or ''
 local modDir = scripts:gsub('[Ss]cripts[/\\]$', '')
 
--- On-screen size of a widget from its last layout pass ("?" if never drawn).
+-- Desired size of a widget: what it asks its parent for ("?" if unknown).
+-- The drawn size is not read: passing FGeometry to SlateBlueprintLibrary
+-- has crashed this game natively.
 local function sizeOf(w)
-    local size = get(function()
-        local lib = StaticFindObject('/Script/UMG.Default__SlateBlueprintLibrary')
-        return lib:GetLocalSize(w:GetCachedGeometry())
-    end)
-    local x, y = get(function() return size.X end), get(function() return size.Y end)
-    local drawn = (type(x) == 'number' and type(y) == 'number') and string.format('%.0fx%.0f', x, y) or '?'
-    -- Desired size: what the widget asks its parent for (independent of the last frame).
     local desired = get(function() return w:GetDesiredSize() end)
     local dx, dy = get(function() return desired.X end), get(function() return desired.Y end)
     if type(dx) == 'number' and type(dy) == 'number' then
-        drawn = drawn .. string.format(' desired=%.0fx%.0f', dx, dy)
+        return string.format('desired=%.0fx%.0f', dx, dy)
     end
-    return drawn
+    return '?'
 end
 
 local function walkWidget(w, depth, out, seen)

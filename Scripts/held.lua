@@ -545,10 +545,10 @@ local function addGhost(actor, t, parent, socket, leader)
     trace('configure ghost')
     pcall(function() ghost:SetCollisionEnabled(NO_COLLISION) end)
     pcall(function() ghost:SetGenerateOverlapEvents(false) end)
-    trace('attach ghost to ' .. nameOf(parent) .. ' socket ' .. tostring(socket))
+    if Cfg.Debug then trace('attach ghost to ' .. nameOf(parent) .. ' socket ' .. tostring(socket)) end
     pcall(function() ghost:K2_AttachToComponent(parent, FName(socket or 'None'), KEEP_RELATIVE, KEEP_RELATIVE, KEEP_RELATIVE, false) end)
     local mesh = meshAsset(tpl)
-    trace('set mesh ' .. full(mesh))
+    if Cfg.Debug then trace('set mesh ' .. full(mesh)) end
     if skeletal then
         if not pcall(function() ghost:SetSkeletalMeshAsset(mesh) end) then
             pcall(function() ghost:SetSkeletalMesh(mesh, true) end)
@@ -588,7 +588,8 @@ end
 
 -- Renders appearance `want` (ITEM id or HIDDEN) on `actor`. Returns ok, reason.
 local function dress(state, actor, key, want, hiddenValue)
-    trace('apply ' .. want .. ' on ' .. full(actor:GetClass()))
+    -- trace() lines that name objects are only built with Debug on.
+    if Cfg.Debug then trace('apply ' .. want .. ' on ' .. full(actor:GetClass())) end
     local reals = realVisuals(actor)
     if #reals == 0 then return false, 'no visible meshes on ' .. full(actor:GetClass()) end
     trace(#reals .. ' real mesh(es) found')
@@ -596,12 +597,12 @@ local function dress(state, actor, key, want, hiddenValue)
     if want ~= hiddenValue then
         local data = C.load(C.find(key, want))
         if not data then return false, 'unknown look ' .. tostring(want) end
-        trace('resolve actor class of ' .. full(data))
+        if Cfg.Debug then trace('resolve actor class of ' .. full(data)) end
         local cls = actorClassOf(data)
         if not valid(cls) then return false, 'no actor class for ' .. want end
         local hints = {}
         for _, comp in ipairs(reals) do hints[#hints + 1] = nameOf(comp) end
-        trace('read templates of ' .. full(cls))
+        if Cfg.Debug then trace('read templates of ' .. full(cls)) end
         templates = visualTemplates(cls, hints)
         if #templates == 0 then return false, 'no meshes found in ' .. full(cls) end
         trace(#templates .. ' template(s) found')
@@ -702,14 +703,15 @@ function Hd.update(state, equipment, side, sel, hiddenValue, onSeen)
     if not alive(actor) then return end
 
     local data = heldData(equipment, actor, side)
-    local key = C.heldKey(data)
+    local dataName = full(data) -- read once per hand and tick
+    local key = C.heldKey(data, dataName)
     if state.learnedFor ~= actorName then
         state.learnedFor = actorName
         pcall(cleanupStale, actor)
         if key then learn(data, actor) end
     end
     if onSeen and data then
-        local id = full(data):match('%.([%w_]+)$')
+        local id = dataName:match('%.([%w_]+)$')
         if id then onSeen(id) end
     end
     local want = key and sel[key] or nil

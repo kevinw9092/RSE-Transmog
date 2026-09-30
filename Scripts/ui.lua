@@ -98,9 +98,16 @@ local TAG = 'RSETransmog_'
 -- Tags of earlier builds, still cleaned up after a hot reload.
 local STALE_TAGS = { TAG, 'DWWardrobe_' }
 local tagCount = 0
+-- Native UMG classes (TextBlock, Border, ...) are part of the engine and never
+-- unload, so unlike game assets they are kept once found.
+local umgClasses = {}
 
 local function widget(kind, outer, tag)
-    local cls = StaticFindObject('/Script/UMG.' .. kind)
+    local cls = umgClasses[kind]
+    if not valid(cls) then
+        cls = StaticFindObject('/Script/UMG.' .. kind)
+        umgClasses[kind] = cls
+    end
     assert(valid(cls), 'Missing UMG class ' .. kind)
     if tag then
         -- Unique per instance: reusing a live object's name inside the same outer is fatal.
@@ -183,19 +190,45 @@ local function setTextColor(tb, color)
     pcall(function() tb:SetColorAndOpacity({ SpecifiedColor = color, ColorUseRule = 0 }) end)
 end
 
+-- What creating game widgets needs, resolved once per build (a mount, or one
+-- tab's grid) and held in view.factory only while that build runs: the game
+-- objects in it are never kept past it (see catalog.lua).
+local function newFactory()
+    return {
+        library = StaticFindObject('/Script/UMG.Default__WidgetBlueprintLibrary'),
+        world = H.GetWorld(),
+        -- The owner must be a player controller of this world. While a world is
+        -- loading, a cached controller can still be the main menu's, and the
+        -- engine then refuses to create the widget, so try the fresh one first.
+        owners = { H.GetPlayerController(), V.localController() },
+        classes = {},
+    }
+end
+
+-- Runs fn(...) with view.factory set, and drops it afterwards (also on error).
+local function withFactory(view, fn, ...)
+    view.factory = newFactory()
+    local ok, err = pcall(fn, ...)
+    view.factory = nil
+    if not ok then error(err, 0) end
+end
+
 -- Creates one of the game's Widget Blueprints.
-local function userWidget(classPath)
-    -- Looked up by path each time; never cached (see catalog.lua).
-    local cls = C.resolve(classPath)
+local function userWidget(view, classPath)
+    local f = view.factory or newFactory()
+    local cls = f.classes[classPath]
+    if not cls then
+        cls = C.resolve(classPath)
+        f.classes[classPath] = cls
+    end
     assert(valid(cls), 'Game widget missing: ' .. classPath)
-    local library = StaticFindObject('/Script/UMG.Default__WidgetBlueprintLibrary')
-    local world = H.GetWorld()
-    -- The owner must be a player controller of this world. While a world is
-    -- loading, a cached controller can still be the main menu's, and the
-    -- engine then refuses to create the widget, so try the fresh one first.
-    for _, owner in ipairs({ H.GetPlayerController(), V.localController() }) do
-        local w = get(function() return library:Create(world, cls, owner) end)
-        if valid(w) then return w end
+    for i, owner in ipairs(f.owners) do
+        local w = get(function() return f.library:Create(f.world, cls, owner) end)
+        if valid(w) then
+            -- The owner that worked is tried first for the rest of the build.
+            if i > 1 then table.remove(f.owners, i) table.insert(f.owners, 1, owner) end
+            return w
+        end
     end
     error('Could not create ' .. classPath)
 end
@@ -251,7 +284,7 @@ local function setButtonLabel(b, text)
 end
 
 local function gameButton(view, parent, title, action, minW, minH, labels)
-    local b = userWidget(BUTTON_CLASS)
+    local b = userWidget(view, BUTTON_CLASS)
     local slot = add(parent, b)
     local width = minW or 10
     if title ~= '' then width = fitWidth(labels or { title }, minW) end
@@ -815,6 +848,7 @@ local function buildSlot(view, slot, hideable)
         else
             r.cell = newCell(view, grid, { height = 40, icon = true, action = action })
         end
+        r.cell.inGrid = true -- hover polls it only while its grid is on screen
         if entry then setIcon(view, r.cell, entry.iconPath) end
         data.rows[#data.rows + 1] = r
     end
@@ -840,7 +874,7 @@ function U.showSlot(view, slot)
     local key = V.keyFor(slot)
     view.key = key
     if key and not view.slots[key] then
-        buildSlot(view, key, HIDEABLE[slot] or C.isHeld(key))
+        withFactory(view, buildSlot, view, key, HIDEABLE[slot] or C.isHeld(key))
         lap('build')
     end
     for k, other in pairs(view.slots) do
@@ -1242,7 +1276,7 @@ local function backdrop(tree, source, tag, fallback)
     return image
 end
 
-function U.mount(panel)
+local function mount(panel)
     if not valid(panel) then return end
     local key = name(panel)
     local old = U.views[key]
@@ -1259,6 +1293,7 @@ function U.mount(panel)
         actionKeys = {}, statusCache = {}, countCache = {},
     }
     U.views[key] = view
+    view.factory = newFactory() -- dropped by U.mount when the build ends
 
     local canvas
     if Dock.present() then
@@ -1329,6 +1364,13 @@ function U.mount(panel)
     frame:SetVisibility(COLLAPSED)
     view.menuOpen = false
     debug('mounted on ' .. key .. (view.dock and ' (RSE-Dock icon)' or ''))
+end
+
+function U.mount(panel)
+    local ok, err = pcall(mount, panel)
+    -- The build's factory (world, owner) is not kept, whether it worked or not.
+    for _, view in pairs(U.views) do view.factory = nil end
+    if not ok then error(err, 0) end
 end
 
 -- -------------------------------------------------------------------- tick
@@ -1415,7 +1457,7 @@ function U.hover()
     for _, view in pairs(U.views) do
         if view.menuOpen then
             local hoveredLabel, currentLabel
-            for _, c in ipairs(view.cells) do
+            local function poll(c)
                 local ok, hovered = pcall(function() return c.hit:IsValid() and c.hit:IsHovered() end)
                 hovered = ok and hovered == true
                 if c.hovered ~= hovered then
@@ -1423,8 +1465,16 @@ function U.hover()
                     paint(c)
                 end
             end
-            -- Details: only the grid on screen (other tabs' grids are collapsed).
-            local data = view.native and view.key and view.slots[view.key]
+            -- Tabs and buttons, then only the grid on screen (other tabs' grids
+            -- are collapsed, and rows filtered out by the search are hidden).
+            for _, c in ipairs(view.cells) do
+                if not c.inGrid then poll(c) end
+            end
+            local shown = view.key and view.slots[view.key]
+            for _, row in ipairs(shown and shown.rows or {}) do
+                if row.visible ~= false then poll(row.cell) end
+            end
+            local data = view.native and shown
             for _, row in ipairs(data and data.rows or {}) do
                 local c = row.cell
                 if row.visible ~= false and c.label then

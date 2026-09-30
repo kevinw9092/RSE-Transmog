@@ -43,7 +43,9 @@ end
 
 -- The local controller is cached: FindAllOf walks every object, and on a
 -- listen server the first PlayerController found may belong to a guest.
-local cachedPC, lastScan = nil, -math.huge
+-- A scan that found nothing (dedicated server, loading screen) is repeated
+-- at most every 3 s instead of every second.
+local cachedPC, lastScan, scanGap = nil, -math.huge, 1
 function V.localController()
     local now = os.clock()
     if alive(cachedPC) then
@@ -52,7 +54,7 @@ function V.localController()
         if now - lastScan < 1 or alive(get(function() return cachedPC:K2_GetPawn() end)) then return cachedPC end
     end
     cachedPC = nil
-    if now - lastScan < 1 then return nil end
+    if now - lastScan < scanGap then return nil end
     lastScan = now
     for _, pc in ipairs(FindAllOf('PlayerController') or {}) do
         if alive(pc) and get(function() return pc:IsLocalController() end) == true then
@@ -60,6 +62,7 @@ function V.localController()
             break
         end
     end
+    scanGap = cachedPC and 1 or 3
     return cachedPC
 end
 
@@ -217,7 +220,9 @@ local function applyWearable(ch, slot, force)
         if not want then ch.shown[slot] = nil end
     end
     ch.sig[slot] = want and signature(equipment, slot) or nil
-    debug('apply ' .. slot .. '=' .. tostring(want) .. ' actual=' .. ch.lastActual[slot] .. (ch.isLocal and '' or ' (other player)'))
+    if Cfg.Debug then
+        debug('apply ' .. slot .. '=' .. tostring(want) .. ' actual=' .. ch.lastActual[slot] .. (ch.isLocal and '' or ' (other player)'))
+    end
     return true
 end
 
@@ -395,6 +400,15 @@ local function remoteTick(pc, localPawnName, now)
     end
 end
 
+-- Other players' looks are known, or other players are still dressed.
+local function hasOthers()
+    if next(N.remote) ~= nil then return true end
+    for _, ch in pairs(chars) do
+        if not ch.isLocal then return true end
+    end
+    return false
+end
+
 -- Runs every tick: a handful of property reads per dressed character, no
 -- asset loading unless a slot actually needs to be re-rendered.
 function V.tick()
@@ -445,7 +459,8 @@ function V.tick()
     if newSeen then save() end
 
     N.clientTick(pc, V.sel)
-    if Cfg.ShowOthers ~= false then
+    -- Solo play, or nobody else shared a look: nothing to dress or drop.
+    if Cfg.ShowOthers ~= false and hasOthers() then
         remoteTick(pc, pawnName, now)
     end
 end
@@ -493,25 +508,30 @@ function V.syncPreview(forget)
             local actual = equipment['Current' .. slot .. 'Wearable']
             local want = V.sel[slot]
             local touched = previewSig[key][slot] ~= nil
-            if valid(component) and valid(actual) and (want or touched) then
+            -- Signature (strings only): choice, real item, body type, and what the
+            -- preview draws after our last apply. Unchanged means nothing to do.
+            local base = valid(actual) and (tostring(want) .. '|' .. full(actual) .. '|' .. tostring(bodyType)) or nil
+            if valid(component) and base and (want or touched)
+                and previewSig[key][slot] ~= base .. '|' .. meshName(component) then
                 local ok, err = pcall(function()
                     if want == V.HIDDEN then
-                        component:SetVisibility(false, true)
+                        if component:IsVisible() then component:SetVisibility(false, true) end
                     else
                         local asset = want and C.load(C.find(slot, want)) or actual
                         local mesh = asset:GetSkeletalMesh(bodyType)
-                        local current = component:GetSkeletalMeshAsset()
-                        if full(current) ~= full(mesh) or previewSig[key][slot] ~= full(asset) then
+                        if full(component:GetSkeletalMeshAsset()) ~= full(mesh) then
                             if not pcall(function() component:SetSkeletalMeshAsset(mesh) end) then
                                 component:SetSkeletalMesh(mesh, true)
                             end
-                            asset:ApplyMaterialsToSkeletalMeshComponent(bodyType, component)
                         end
-                        component:SetVisibility(valid(mesh), true)
+                        -- The signature changed: the materials may differ even on the same mesh.
+                        asset:ApplyMaterialsToSkeletalMeshComponent(bodyType, component)
+                        local visible = valid(mesh)
+                        if component:IsVisible() ~= visible then component:SetVisibility(visible, true) end
                     end
                 end)
                 if ok then
-                    previewSig[key][slot] = want and (want == V.HIDDEN and 'hidden' or full(C.load(C.find(slot, want)))) or nil
+                    previewSig[key][slot] = want and (base .. '|' .. meshName(component)) or nil
                 else
                     debug('preview ' .. slot .. ': ' .. tostring(err))
                 end
@@ -540,7 +560,7 @@ end
 -- crashes the game natively). Characters are found again after the load.
 function V.forget()
     chars, byEquipment = {}, {}
-    cachedPC, lastScan = nil, -math.huge
+    cachedPC, lastScan, scanGap = nil, -math.huge, 1
     previewSig, previews = {}, nil
 end
 
