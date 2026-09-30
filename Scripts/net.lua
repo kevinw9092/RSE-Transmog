@@ -260,8 +260,25 @@ end
 -- "server has no mod".
 N.stats = { serverHook = 0, sent = 0, serverHandled = 0, clientHook = 0, clientHandled = 0, lastError = nil }
 
+-- Whether a hook call came from another machine's player (a message that
+-- arrived here) rather than our own outgoing call.
+local function fromRemote(ctx)
+    local pc = get(function() return ctx:get() end)
+    return valid(pc) and get(function() return pc:IsLocalController() end) ~= true
+end
+
 function N.hook()
+    -- Control (1.2.9): messages every player's game sends the server while
+    -- joining. If these are logged but ServerExec never is, player-to-server
+    -- messages do reach the mods here and only ServerExec is lost on the way;
+    -- if neither is, no incoming player message reaches the mods at all.
+    for _, fn in ipairs({ 'ServerAcknowledgePossession', 'ServerNotifyLoadedWorld' }) do
+        pcall(RegisterHook, '/Script/Engine.PlayerController:' .. fn, function(ctx)
+            if fromRemote(ctx) then once('control ' .. fn, 'relay: control: a player\'s ' .. fn .. ' reached the mods here') end
+        end)
+    end
     local ok, err = pcall(RegisterHook, '/Script/Engine.PlayerController:ServerExec', function(ctx, message)
+        if fromRemote(ctx) then once('arrived', 'relay: a ServerExec from a player arrived') end
         if not enabled() then return end
         N.stats.serverHook = N.stats.serverHook + 1
         local text = textOf(message)

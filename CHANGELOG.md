@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.9
+- **More relay diagnostics.** 1.2.8 showed that no player message reaches Transmog on the dedicated server. RSE-Toolbag's server sends "ready" without waiting for a message, so it never showed whether player-to-server messages arrive at all. The server now logs once when any player's `ServerExec` arrives, whatever its text. It also logs once when two messages every game sends while joining arrive (`ServerAcknowledgePossession`, `ServerNotifyLoadedWorld`). Together these show whether only `ServerExec` is lost, or every player message to the server.
+
 ## 1.2.8
 - **Relay diagnostics.** The server logs one line per session when a player's first message arrives and when it answers a hello, whatever the Debug setting. It also logs one line for each reason it would drop a message silently: the message doesn't count as reaching the server, the player has no player ID, the text can't be read, or the answer can't be sent. The player's game says once when the server never answered, with a pointer to those lines. Before this, "others cannot see my looks" left nothing in either log.
 
