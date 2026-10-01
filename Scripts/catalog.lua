@@ -354,16 +354,29 @@ local function kismet()
     return StaticFindObject('/Script/Engine.Default__KismetSystemLibrary')
 end
 
+-- Soft pointer -> "/Path/To.Asset" via KismetSystemLibrary, or nil.
+local function softToString(soft)
+    local ok, s = pcall(function()
+        local r = kismet():Conv_SoftObjectReferenceToString(soft)
+        if type(r) == 'string' then return r end
+        return r:ToString()
+    end)
+    if ok and type(s) == 'string' and s ~= '' and s ~= 'None' then return s end
+    return nil
+end
+
 -- Path of an item data asset's icon texture (a string), or nil.
 local iconWarned = false
 local function findIconPath(asset)
+    -- First: the item's own accessor (UItemData::GetIcon) converted by the
+    -- engine, which does not depend on how this UE4SS build lays out soft
+    -- pointers. The property layouts below stay as the fallback.
+    local first = softToString(get(function() return asset:GetIcon() end))
+    if first and C.resolve(first) then return first end
     local okSoft, soft = pcall(function() return asset.Icon end)
     if not okSoft or soft == nil then return nil end
     local path = iconPath(soft)
-    if not path then
-        local ok, s = pcall(function() return kismet():Conv_SoftObjectReferenceToString(soft):ToString() end)
-        if ok and type(s) == 'string' and s ~= '' and s ~= 'None' then path = s end
-    end
+    if not path then path = softToString(soft) end
     if path and C.resolve(path) then return path end
     local ok, tex = pcall(function() return kismet():LoadAsset_Blocking(soft) end)
     if ok and valid(tex) then
@@ -392,9 +405,23 @@ function C.iconOf(asset)
     return C.resolve(C.iconPathOf(asset))
 end
 
+-- UEquipmentData::CanBeEquipped(PlayerController, OutCannotUseReason): the
+-- game's own gate, which knows whether the player owns the entitlement.
+-- The out-parameter is passed as a table; returns true, false, or nil when
+-- the call does not work on this UE4SS build.
+local function canBeEquipped(asset, pc)
+    if not valid(pc) then return nil end
+    for _, reason in ipairs({ {}, { TagName = FName('None') } }) do
+        local ok, result = pcall(function() return asset:CanBeEquipped(pc, reason) end)
+        if ok and type(result) == 'boolean' then return result end
+    end
+    return nil
+end
+
 -- Loads names, icons and ownership restrictions for one slot, once.
+-- pc: the local player controller, if known (entitlement check).
 local prepared = {}
-function C.prepare(slot)
+function C.prepare(slot, pc)
     discover()
     if prepared[slot] then return C[slot] end
     prepared[slot] = true
@@ -407,7 +434,12 @@ function C.prepare(slot)
             entry.iconPath = C.iconPathOf(asset)
             pcall(function()
                 local ent = asset.EntitlementRequiredToEquip
-                if valid(ent) and not ent.bAutoUnlock then entry.restricted = true end
+                if valid(ent) and not ent.bAutoUnlock then
+                    -- Owned DLC is no longer locked: the game says it can be
+                    -- equipped. A false answer (or no answer) keeps the lock,
+                    -- as before; the EXCLUDE list is never lifted.
+                    entry.restricted = not (canBeEquipped(asset, pc) == true and not C.excluded(entry.id))
+                end
             end)
             keep[#keep + 1] = entry
         end
@@ -467,6 +499,16 @@ function C.known(entry, seen, progress)
     local ok, result = pcall(function() return progress:IsRecipeUnlocked(recipe) end)
     if not ok then return nil end
     return result == true
+end
+
+-- The game reported newly unlocked recipes (UProgressComponent hook in
+-- visual.lua): look for recipes again at once, and bump unlockStamp so the
+-- open wardrobe refreshes its unlock flags. Switching tabs still refreshes
+-- them too, as before.
+C.unlockStamp = 0
+function C.recipesUnlocked()
+    recipesAt, noRecipe = -math.huge, {}
+    C.unlockStamp = C.unlockStamp + 1
 end
 
 -- Updates entry.unlocked (known looks only) for every entry of a slot key.

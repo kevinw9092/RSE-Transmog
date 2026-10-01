@@ -9,6 +9,11 @@
 -- shipping dedicated server drops before any hook sees it (1.2.9 logs: a
 -- joining player's ServerAcknowledgePossession reached the mods, ServerExec
 -- never did). The server still accepts ServerExec from older clients.
+-- Note: ServerExec(FString) is the Blueprint-facing wrapper; the actual
+-- client->server RPC behind it is APlayerController::ServerExecRPC(FString).
+-- Both are debug-exec paths that shipping servers filter, which is why the
+-- transport moved to ServerNotifyLoadedWorld: an ordinary reliable gameplay
+-- RPC that every server build accepts and that is inert for our text.
 -- The server (listen host or dedicated server with UE4SS) keeps each
 -- player's selection and relays it to every client that said hello. Only
 -- selection ids travel; stats, inventory and replicated game state are

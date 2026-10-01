@@ -1,9 +1,11 @@
 -- Appearance override for the local character and, with multiplayer sync,
 -- for other players who run the mod.
 --
--- Armour: Current<Slot>Wearable is swapped to the chosen appearance, the
--- game's own OnRep visual refresh runs, and the real pointer is written back
--- in the same call. Equipment, stats, inventory and save data never change.
+-- Armour: on clients, Current<Slot>Wearable is swapped to the chosen
+-- appearance, the game's own OnRep visual refresh runs, and the real pointer
+-- is written back in the same call. With authority (solo, listen host) the
+-- look's mesh is put on the outfit mesh directly instead (see swapShow).
+-- Equipment, stats, inventory and save data never change.
 -- Weapons: see held.lua (real meshes stop drawing, local ghost meshes show
 -- the chosen look). Everything here is local rendering on this machine; the
 -- only thing shared with other players is the list of chosen ids (net.lua).
@@ -90,8 +92,12 @@ end
 -- -------------------------------------------------------------- characters
 
 local function newChar(pawn, equipment, isLocal)
+    local eqName = full(equipment)
     local ch = {
-        pawn = pawn, pawnName = full(pawn), equipment = equipment, eqName = full(equipment), isLocal = isLocal,
+        pawn = pawn, pawnName = full(pawn), equipment = equipment, eqName = eqName, isLocal = isLocal,
+        -- This machine owns the character (solo, listen host, or a guest's pawn
+        -- on the host). nil/false when unknown: the OnRep route, as before.
+        authority = get(function() return pawn:HasAuthority() end) == true,
         sel = EMPTY,
         shown = {},       -- slot -> PATH of the appearance currently rendered by us (never the object)
         hidden = {},      -- slot -> true while we hide the slot
@@ -99,7 +105,7 @@ local function newChar(pawn, equipment, isLocal)
         lastActual = {},  -- slot -> full name of the real equipped item
         retryAt = {},     -- slot -> earliest os.clock() for a watchdog re-apply
         applied = {},     -- slot -> selection value last rendered
-        hands = { Right = Hd.newState(), Left = Hd.newState() },
+        hands = { Right = Hd.newState(eqName), Left = Hd.newState(eqName) },
     }
     chars[ch.pawnName] = ch
     byEquipment[ch.eqName] = ch
@@ -119,7 +125,7 @@ end
 local function meshName(component)
     if not valid(component) then return 'none' end
     local ok, mesh = pcall(function() return component:GetSkeletalMeshAsset() end)
-    if not ok then ok, mesh = pcall(function() return component.SkeletalMeshAsset end) end
+    if not ok then ok, mesh = pcall(function() return component.SkeletalMesh end) end -- legacy field
     local visible = false
     pcall(function() visible = component:IsVisible() end)
     return (ok and full(mesh) or '?') .. '|' .. tostring(visible)
@@ -129,9 +135,52 @@ local function signature(equipment, slot)
     return meshName(equipment['Outfit' .. slot .. 'Mesh'])
 end
 
+-- Direct route: puts the look's mesh, materials and animation class on the
+-- slot's outfit mesh component, the way syncPreview dresses the inventory
+-- preview. No replicated field is written and no OnRep runs.
+-- Unlike the OnRep route it does not redo the game's other per-item visuals
+-- (MaterialSectionsToHide on the body, hair under helmets): those stay as the
+-- real item set them.
+local function directShow(ch, slot, appearance)
+    local component = ch.equipment['Outfit' .. slot .. 'Mesh']
+    if not valid(component) then return false, 'no outfit mesh' end
+    local okBody, bodyType = pcall(function() return ch.pawn:GetPlayerCustomizationComponent():GetBodyType() end)
+    if not okBody or bodyType == nil then return false, 'no body type' end
+    return pcall(function()
+        local mesh = appearance:GetSkeletalMesh(bodyType)
+        if not valid(mesh) then error('no mesh for this body type') end
+        if full(component:GetSkeletalMeshAsset()) ~= full(mesh) then component:SetSkeletalMeshAsset(mesh) end
+        appearance:ApplyMaterialsToSkeletalMeshComponent(bodyType, component)
+        local anim = get(function() return appearance:GetAnimBlueprintClass(bodyType) end)
+        if valid(anim) and full(get(function() return component.AnimClass end)) ~= full(anim) then
+            component:SetAnimInstanceClass(anim)
+        end
+    end)
+end
+
 -- Renders `appearance` in `slot` while keeping `actual` as the real item.
+--
+-- Two routes:
+--  * Machine WITHOUT authority over the character (a client looking at its
+--    own or anyone's pawn): Current<Slot>Wearable is swapped to the look, the
+--    game's own OnRep_Current<Slot>Wearable visual refresh runs, and the real
+--    pointer is written back in the same call. On a client OnRep is purely
+--    the visual refresh of a replicated value, so this is the faithful route
+--    (it also hides body sections and hair the way the game does).
+--  * Machine WITH authority (solo, listen host): the same replicated field is
+--    the server's real state, and its OnRep may do more than visuals there
+--    (e.g. apply the fake item's effects). The direct route is used instead;
+--    if it fails, the OnRep route below runs as before.
 local function swapShow(ch, slot, appearance, actual)
     local equipment = ch.equipment
+    if ch.authority then
+        local ok, err = directShow(ch, slot, appearance)
+        if ok then
+            ch.shown[slot] = C.pathOf(appearance)
+            return true
+        end
+        debug('direct ' .. slot .. ' failed, using the OnRep route: ' .. tostring(err))
+    end
     local prop = 'Current' .. slot .. 'Wearable'
     -- The previous look is kept as a path and looked up now: a kept data asset
     -- can have been unloaded since (see catalog.lua).
@@ -152,6 +201,10 @@ end
 
 -- Head hiding reuses the game's own "hide helmet" visual path locally. The
 -- replicated flag is restored immediately, so nothing is sent or saved.
+-- This runs on every machine, authority included: bHideHeadWearable is the
+-- player's own cosmetic "hide helmet" option (Server_UpdateHeadWearableHiddenState),
+-- not an item, so its OnRep carries no item effects; it also shows the hair
+-- the way the game does, which hiding the mesh alone would not.
 local function renderHeadHidden(equipment, hide)
     local real = equipment.bHideHeadWearable
     V.guard = true
@@ -478,6 +531,17 @@ function V.hook()
         end)
         if not ok then debug('hook ' .. slot .. ' unavailable: ' .. tostring(err)) end
     end
+    -- Held items: change events let held.lua skip its per-tick check.
+    local okHeld, heldErr = pcall(Hd.hook)
+    if not okHeld then debug('held hooks unavailable: ' .. tostring(heldErr)) end
+    -- Recipes learned: refresh the wardrobe's unlock flags (the refresh on
+    -- each tab switch stays as the safety net).
+    for _, fn in ipairs({ 'BP_OnRecipesUnlocked', 'Client_OnRecipesUnlocked' }) do
+        local ok, err = pcall(RegisterHook, '/Script/Dominion.ProgressComponent:' .. fn, function() end, function()
+            C.recipesUnlocked()
+        end)
+        if not ok then debug('hook ' .. fn .. ' unavailable: ' .. tostring(err)) end
+    end
 end
 
 -- Inventory character preview: it renders from the real inventory, so the
@@ -520,9 +584,7 @@ function V.syncPreview(forget)
                         local asset = want and C.load(C.find(slot, want)) or actual
                         local mesh = asset:GetSkeletalMesh(bodyType)
                         if full(component:GetSkeletalMeshAsset()) ~= full(mesh) then
-                            if not pcall(function() component:SetSkeletalMeshAsset(mesh) end) then
-                                component:SetSkeletalMesh(mesh, true)
-                            end
+                            component:SetSkeletalMeshAsset(mesh)
                         end
                         -- The signature changed: the materials may differ even on the same mesh.
                         asset:ApplyMaterialsToSkeletalMeshComponent(bodyType, component)

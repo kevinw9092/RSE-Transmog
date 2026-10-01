@@ -25,9 +25,12 @@ local SKELETAL = '/Script/Engine.SkeletalMeshComponent'
 -- Meshes gameplay shows and hides on its own (loaded arrows, bolts, effects).
 local SKIP = { 'projectile', 'arrow', 'bolt', 'ammo', 'fx', 'niagara', 'particle', 'trail' }
 -- Names tried on the chosen weapon's Blueprint besides the real weapon's own.
-local COMMON_NAMES = { 'Mesh', 'StaticMesh', 'SkeletalMesh', 'WeaponMesh', 'ItemMesh', 'EquipmentMesh',
+-- MeshComponent first: it is AHeldEquipmentActor's native weapon mesh
+-- (USkeletalMeshComponent, also returned by GetMesh()).
+local COMMON_NAMES = { 'MeshComponent', 'Mesh', 'StaticMesh', 'SkeletalMesh', 'WeaponMesh', 'ItemMesh', 'EquipmentMesh',
     'StaticMeshComponent', 'SkeletalMeshComponent', 'Weapon', 'Blade', 'Head', 'Handle' }
-local KEEP_RELATIVE, NO_COLLISION, ALWAYS_TICK_POSE = 0, 0, 0
+-- EVisibilityBasedAnimTickOption: 0 = AlwaysTickPoseAndRefreshBones.
+local KEEP_RELATIVE, NO_COLLISION, ALWAYS_TICK_POSE_AND_REFRESH_BONES = 0, 0, 0
 
 local function valid(o) local k = type(o) return (k == 'userdata' or k == 'table') and o:IsValid() == true end
 local function full(o) return valid(o) and o:GetFullName() or '' end
@@ -133,8 +136,8 @@ local function isSkeletal(comp) return get(function() return comp:IsA(SKELETAL) 
 
 local function meshAsset(comp)
     if isSkeletal(comp) then
-        local m = get(function() return comp.SkeletalMeshAsset end)
-        if not valid(m) then m = get(function() return comp:GetSkeletalMeshAsset() end) end
+        -- GetSkeletalMeshAsset() is the accessor; .SkeletalMesh is the legacy field.
+        local m = get(function() return comp:GetSkeletalMeshAsset() end)
         if not valid(m) then m = get(function() return comp.SkeletalMesh end) end
         return valid(m) and m or nil
     end
@@ -163,7 +166,12 @@ local function actorComponents(actor)
     end
     walk(get(function() return actor:K2_GetRootComponent() end), 0)
     if #out <= 1 then
-        -- Fallback: the engine's own component query.
+        -- Fallback: the actor's native weapon mesh, then the engine's own component query.
+        local native = get(function() return actor:GetMesh() end)
+        if valid(native) and not seen[full(native)] then
+            seen[full(native)] = true
+            out[#out + 1] = native
+        end
         local cls = class(MESH)
         for _, comp in ipairs(list(get(function() return actor:K2_GetComponentsByClass(cls) end))) do
             if valid(comp) and not seen[full(comp)] then
@@ -447,7 +455,7 @@ local function hideReal(state, comp)
     if isSkeletal(comp) then
         saved.tick = get(function() return comp.VisibilityBasedAnimTickOption end)
         -- Keep animating while not drawn so ghosts following its pose move.
-        pcall(function() comp.VisibilityBasedAnimTickOption = ALWAYS_TICK_POSE end)
+        pcall(function() comp.VisibilityBasedAnimTickOption = ALWAYS_TICK_POSE_AND_REFRESH_BONES end)
     end
     local ok = pcall(function()
         comp:SetRenderInMainPass(false)
@@ -550,15 +558,11 @@ local function addGhost(actor, t, parent, socket, leader)
     local mesh = meshAsset(tpl)
     if Cfg.Debug then trace('set mesh ' .. full(mesh)) end
     if skeletal then
-        if not pcall(function() ghost:SetSkeletalMeshAsset(mesh) end) then
-            pcall(function() ghost:SetSkeletalMesh(mesh, true) end)
-        end
+        pcall(function() ghost:SetSkeletalMeshAsset(mesh) end)
         local leaderMesh = leader and meshAsset(leader)
         if leaderMesh and sameSkeleton(mesh, leaderMesh) then
             -- Same rig (bow strings, crossbow arms): copy the real weapon's pose.
-            if not pcall(function() ghost:SetLeaderPoseComponent(leader, true, false) end) then
-                pcall(function() ghost:SetMasterPoseComponent(leader, true) end)
-            end
+            pcall(function() ghost:SetLeaderPoseComponent(leader, true, false) end)
         else
             local anim = get(function() return tpl.AnimClass end)
             if valid(anim) then pcall(function() ghost:SetAnimInstanceClass(anim) end) end
@@ -687,20 +691,53 @@ end
 
 -- ----------------------------------------------------------------- public
 
-function Hd.newState() return { ghosts = {}, hidden = {} } end
+-- Held-item change events: OnRep_HeldEquipmentActorRight/Left bump a counter
+-- per equipment component and side. A hand whose counter has moved at least
+-- once (events proven to reach this machine for it) skips its full check while
+-- nothing changed; the full check still runs every POLL_EVERY seconds as a
+-- safety net. Without events (hook unavailable, or a listen host's own pawn,
+-- where the engine does not call OnRep) every tick checks, as before.
+local POLL_EVERY = 1
+local events = {} -- equipment full name .. '|' .. side -> counter
+
+-- eqName: full name of the equipment component this hand belongs to.
+function Hd.newState(eqName) return { ghosts = {}, hidden = {}, eqName = eqName } end
+
+function Hd.hook()
+    for _, side in ipairs({ 'Right', 'Left' }) do
+        local fn = '/Script/Dominion.PlayerEquipmentComponent:OnRep_HeldEquipmentActor' .. side
+        local ok, err = pcall(RegisterHook, fn, function() end, function(ctx)
+            local key = full(get(function() return ctx:get() end)) .. '|' .. side
+            events[key] = (events[key] or 0) + 1
+        end)
+        if not ok then debug('hook held ' .. side .. ' unavailable: ' .. tostring(err)) end
+    end
+end
 
 -- Keeps one hand of one character in line with `sel`.
 -- sel: slot key -> ITEM id | hiddenValue. onSeen(id) is called for the real item.
 function Hd.update(state, equipment, side, sel, hiddenValue, onSeen)
+    local now = os.clock()
+    local stamp = state.eqName and events[state.eqName .. '|' .. side]
+    if stamp and stamp == state.eventStamp and state.settled and now < (state.pollAt or 0)
+        and (state.key and sel[state.key] or nil) == state.applied then
+        -- Nothing changed since the last full check: only mirror visibility.
+        if state.applied then sync(state) end
+        return
+    end
+    -- settled: the last full check ran to the end (not waiting on a new actor).
+    state.eventStamp, state.pollAt, state.settled = stamp, now + POLL_EVERY, false
     local actor = heldActor(equipment, side)
     local actorName = full(actor)
-    local now = os.clock()
     if actorName ~= state.actor then
         restore(state)
         state.actor, state.applied, state.key = actorName, nil, nil
         state.readyAt = now + 0.2 -- let a freshly spawned actor finish construction
     end
-    if not alive(actor) then return end
+    if not alive(actor) then
+        state.settled = actorName == '' -- empty hand; an actor being torn down is checked again
+        return
+    end
 
     local data = heldData(equipment, actor, side)
     local dataName = full(data) -- read once per hand and tick
@@ -731,6 +768,7 @@ function Hd.update(state, equipment, side, sel, hiddenValue, onSeen)
             end
         end
     end
+    state.settled = true
     if state.applied then sync(state) end
 end
 
@@ -749,6 +787,7 @@ end
 -- Map load: drop the template cache (plain data, so belt and braces).
 function Hd.forgetCaches()
     templateCache = {}
+    for k in pairs(events) do events[k] = nil end
 end
 Hd.visualTemplates = visualTemplates
 

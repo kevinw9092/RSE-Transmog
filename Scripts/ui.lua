@@ -855,7 +855,7 @@ local function buildSlot(view, slot, hideable)
 
     row('original')
     if hideable then row('hidden') end
-    for _, entry in ipairs(C.prepare(slot)) do row('item', entry) end
+    for _, entry in ipairs(C.prepare(slot, V.localController())) do row('item', entry) end
     view.slots[slot] = data
     return data
 end
@@ -881,6 +881,7 @@ function U.showSlot(view, slot)
         other.grid:SetVisibility(k == key and SELF_HIT_TEST_INVISIBLE or COLLAPSED)
     end
     if key then C.refreshUnlocked(key, V.seen, progressComponent()) lap('known looks') end
+    view.unlockStamp = C.unlockStamp
     pcall(function() view.list:ScrollToStart() end)
     view.scrollTries = 2 -- U.tick scrolls the current look into view once rows are laid out
     U.refresh(view)
@@ -1421,6 +1422,12 @@ function U.tick()
                 if view.menuOpen and V.HANDS[U.slot] and V.keyFor(U.slot) ~= view.key then
                     -- The player switched weapon type while the wardrobe is open.
                     U.showSlot(view, U.slot)
+                end
+                if view.menuOpen and view.key and view.unlockStamp ~= C.unlockStamp then
+                    -- Recipes were unlocked while the wardrobe is open.
+                    view.unlockStamp = C.unlockStamp
+                    C.refreshUnlocked(view.key, V.seen, progressComponent())
+                    U.refresh(view)
                 end
                 if view.menuOpen then
                     local query = textOf(view.search:GetText())

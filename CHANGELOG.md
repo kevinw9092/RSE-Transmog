@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.2
+- **Armour looks in solo and on a listen host no longer touch the equipped-item fields.** Until now every machine swapped the replicated `Current<Slot>Wearable` to the look for one call and ran the game's `OnRep` refresh. On the machine with authority that field is the real state, and its refresh may do more than draw. There the look's mesh, materials and animation class are now put straight on the outfit mesh, the way the inventory preview already was. If that fails, the old route runs. Players joining someone else's game keep the old route, which also hides body parts under the armour the way the game does. The direct route does not, so a look may show some clipping in solo.
+- **Owned DLC looks are no longer locked.** Items that need an entitlement now ask the game's own `CanBeEquipped` check. If it can't be asked, the item stays locked as before. Paid and promotional cosmetics that aren't worn yet stay hidden.
+- Learning a recipe while the wardrobe is open now unlocks its look straight away. Switching tabs still refreshes the list as well.
+- Weapon looks: a hand is fully checked again only when the game reports a weapon change, or once a second as a safety net. Where no such report has arrived yet (for example a host's own character), every tick still checks, as before.
+- Item icons are read with the item's own `GetIcon`. The older ways stay as the fallback.
+- Weapon looks try the weapon actor's native `MeshComponent` first. Removed calls to engine functions that don't exist in this game (`SetSkeletalMesh`, `SetMasterPoseComponent`, the `SkeletalMeshAsset` property).
+
 ## 1.3.1
 - **Dedicated servers:** the server is detected once the world has settled, and then only the look relay runs. It looked for a local player every second and ran the wardrobe's ticks for nothing.
 - **Removed a crash risk:** `transmog_dumpui` no longer reads widgets' drawn size (passing it to SlateBlueprintLibrary has crashed this game). It logs the desired size only.
